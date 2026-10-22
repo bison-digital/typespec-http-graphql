@@ -3,6 +3,53 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
+## [0.3.0] - 2026-10-22
+
+Requires `typespec-http-zod` `^0.34.0`, as 0.2 does. For a spec that uses neither new option, every
+file is what 0.2.1 writes but `graphql-runtime.gen.ts`, the copy of this package's runtime, which
+carries the new runtime.
+
+### Added
+
+- **A link chosen by a kind.** Several `@link`s of one model sharing a name, each with `when`, are
+  one field that calls only the operation the parent's kind names: a reference whose target depends
+  on another property, a review of a book or of an author, costs one call per parent rather than
+  one per possible target.
+
+  ```tsp
+  @@link(Review, "subject", Books.read, #{ id: "subject_id" }, #{ when: #{ subject_type: "book" } });
+  @@link(Review, "subject", Authors.read, #{ authorId: "subject_id" }, #{ when: #{ subject_type: "author" } });
+  ```
+
+  `subject` is the union `ReviewSubject = Book | Author`, a union even with one arm so that a second
+  arm adds a member rather than changing the type. A kind no arm names is `null` and calls nothing.
+  The field carries `extensions.operationIds`, every operation it may call. Arms that cannot be one
+  field are dropped with `link-arms-conflict`, a `when` the property cannot hold with
+  `link-when-mismatch`, and an arm answering no object type with `link-arm-not-object`.
+
+- **Batched links.** `batch` on a link to a batch read, an operation taking a list of ids in its query
+  as AIP-231's `BatchGet` does, sends the distinct values of every parent a document reaches at once
+  in one call, and answers each field the item whose `key` is its value:
+
+  ```tsp
+  @@link(Book, "author", Authors.batchGet, #{ ids: "author_id" }, #{ batch: #{ key: "id" } });
+  ```
+
+  A page of books reads its authors in one call, and their publishers in one more, where the call
+  memo made one call per distinct id. The values are sent in chunks of the batch parameter's
+  `@maxItems`; a value the parameter refuses is that field's `BAD_USER_INPUT`; a 404 for several
+  values sends each again alone, so one missing id blanks no other field. A batch waits for its wave
+  with `setImmediate`, or `setTimeout` where there is none, as on Workers. The field is weighed at
+  the calls its values can take, and the retries a 404 can cost, so `costLimit` still bounds the
+  calls a document makes. `link-batch-invalid` drops a link to an operation that is no batch read of
+  its values. The two compose: an arm of a link chosen by a kind may be batched.
+
+- **`graphqlRequestsOf(program)`**: once this emitter has run in a compile, one request per root field
+  it served, per service: a document the schema accepts, every argument a variable and the result
+  selected to its leaf fields, and `variables(values)`, which turns a REST request's values into that
+  document's variables, so the handler receives what the REST request would hand it. A tool writing
+  requests for the HTTP surface writes them for this one from it; typespec-postman 0.6.0 does.
+
 ## [0.2.1] - 2026-10-22
 
 A patch: no schema, resolver, type or emitted code changes.

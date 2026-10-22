@@ -262,6 +262,35 @@ const schema = new GraphQLSchema({
 					RULES,
 				),
 			},
+			unboundedBooks: {
+				type: BookConnection,
+				args: { first: { type: GraphQLInt }, after: { type: GraphQLString } },
+				resolve: resolverFor(
+					call({
+						operationId: "Books_list",
+						input: z.looseObject({
+							"page-size": z.int32().default(20),
+							"page-token": z.string().exactOptional(),
+						}),
+						arms: [{ status: 200, schema: pageSchema }],
+						projection: { "200": { as: "connection" } },
+						args: {
+							first: { wire: "page-size", dropNull: true },
+							after: { wire: "page-token", dropNull: true },
+						},
+						// A page size with no `@maxValue`: a resume asks for all it skips, unbounded.
+						connection: {
+							items: "items",
+							next: "next_token",
+							first: "page-size",
+							after: "page-token",
+						},
+					}),
+					handlersFor,
+					deps,
+					RULES,
+				),
+			},
 			books: {
 				type: BookConnection,
 				args: {
@@ -664,6 +693,30 @@ describe("a connection", () => {
 		);
 		expect(rest.edges.map((edge) => edge.node.id)).toEqual(all.slice(50).map((item) => item.id));
 		expect(rest.pageInfo.hasNextPage).toBe(false);
+	});
+
+	it("resumes where the page size states no maximum by asking for every item it skips", async () => {
+		const all = Array.from({ length: 10 }, (_, i) => book(`u${String(i + 1)}`, null));
+		next["Books_list"] = (input) => {
+			const start = Number(input["page-token"] ?? 0);
+			const end = start + Number(input["page-size"]);
+			return {
+				status: 200,
+				body: {
+					items: all.slice(start, end),
+					...(end < all.length ? { next_token: String(end) } : {}),
+				},
+			};
+		};
+		const first = await run(`{ unboundedBooks(first: 3) { ${PAGE} } }`);
+		const page = first.data?.["unboundedBooks"] as
+			| { readonly edges: readonly { readonly cursor: string }[] }
+			| undefined;
+		const cursor = page?.edges[0]?.cursor;
+		calls = [];
+		const resumed = await run(`{ unboundedBooks(first: 4, after: "${cursor ?? ""}") { ${PAGE} } }`);
+		expect(resumed.errors).toBeUndefined();
+		expect(calls.map((c) => c.input)).toEqual([{ "page-size": 5 }]);
 	});
 
 	it("refuses a first past the maximum by its own name, resuming or not", async () => {
@@ -2275,6 +2328,56 @@ describe("the handler object", () => {
 		expect(built - before).toBe(1);
 		await run(`{ book(id: "c3") { id } }`);
 		expect(built - before).toBe(2);
+	});
+
+	/**
+	 * **Its own `handlersFor`**, so the first call this test makes is the first the runtime has seen
+	 * of it, and builds the cache this test then reads: a context value that is an object, and one
+	 * that is a function.
+	 */
+	it("is built once per context value by a handlersFor it has not seen before", async () => {
+		let made = 0;
+		const own = () => {
+			made += 1;
+			return handlersFor({ caller: "alice" });
+		};
+		const Shelf = new GraphQLObjectType({
+			name: "Root",
+			fields: Object.fromEntries(
+				["first", "second"].map((name) => [
+					name,
+					{
+						type: GraphQLBoolean,
+						resolve: resolverFor(
+							// An input of each field's own, so the memo shares no call between them.
+							call({
+								operationId: "ping",
+								authentication: "none",
+								security: [],
+								input: z.looseObject({}),
+								supplied: { field: name },
+								arms: [{ status: 200, schema: z.boolean() }],
+								projection: { "200": { as: "value" } },
+							}),
+							own,
+							// A function's `caller` cannot be read in strict mode, so no caller is read off it.
+							{ authorize: () => "allow", context: () => "alice" },
+							RULES,
+						),
+					},
+				]),
+			),
+		});
+		const shelf = new GraphQLSchema({ query: Shelf });
+		next["ping"] = () => ({ status: 200, body: true });
+		for (const contextValue of [{}, () => undefined]) {
+			made = 0;
+			const before = calls.length;
+			const result = await graphql({ schema: shelf, source: "{ first second }", contextValue });
+			expect(result).toEqual({ data: { first: true, second: true } });
+			expect(calls.length - before).toBe(2);
+			expect(made).toBe(1);
+		}
 	});
 
 	it("is each schema's own where two share a context value", async () => {

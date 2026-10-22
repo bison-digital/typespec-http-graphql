@@ -9,8 +9,8 @@ using HttpGraphQL;
  * design.md names codes for (409, 410, 412, 422, 429 with `Retry-After`), a bodyless query, a query
  * with two success bodies, a mutation answering a list, a bodyless refusal, required headers that are
  * arguments, `@encode` on parameters, a date-time header with none, a 64-bit integer, a snake_case wire name, `#deprecated` on an output field, an
- * optional argument, a required argument and a required input field, and a connection whose page size
- * has a maximum and no default.
+ * optional argument, a required argument and a required input field, a connection whose page size
+ * has a maximum and no default, a link chosen by a kind, and a batched link.
  */
 @service(#{ title: "Extras" })
 namespace Extras;
@@ -88,6 +88,39 @@ model ItemPage {
   @continuationToken next?: string;
 }
 
+/** A review of an item or of a kit: `subject_type` says which `subject_id` is. A set has no read. */
+model Review {
+  id: string;
+  subject_type: "item" | "kit" | "set";
+  subject_id: string;
+  item_id: string;
+}
+
+model Kit {
+  id: string;
+  parts: int32;
+}
+
+@route("/reviews")
+interface Reviews {
+  @get list(): Review[];
+}
+
+/** The reads a review's subject is one of, chosen by its kind. */
+@route("/subjects")
+interface Subjects {
+  @get @route("/items/{id}") item(@path id: string): Item | NotFoundResponse;
+  @get @route("/kits/{id}") kit(@path id: string): Kit | NotFoundResponse;
+}
+
+/** Items read in batches: the items for the ids sent, all or none. */
+@route("/item-batches")
+interface ItemBatches {
+  @get read(@query(#{ explode: true }) @maxItems(20) ids: string[]): {
+    items: Item[];
+  } | NotFoundResponse;
+}
+
 @route("/items")
 interface Items {
   @list
@@ -143,3 +176,8 @@ interface Items {
 @@mutationField(Items.create, "createItem");
 @@mutationField(Items.batch, "batchItems");
 @@mutationField(Items.remove, "removeItem");
+@@queryField(Reviews.list, "reviews");
+
+@@link(Review, "subject", Subjects.item, #{ id: "subject_id" }, #{ when: #{ subject_type: "item" } });
+@@link(Review, "subject", Subjects.kit, #{ id: "subject_id" }, #{ when: #{ subject_type: "kit" } });
+@@link(Review, "item", ItemBatches.read, #{ ids: "item_id" }, #{ batch: #{ key: "id" } });

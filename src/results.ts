@@ -330,6 +330,31 @@ export function queryResultOf(
 	};
 }
 
+/**
+ * **The result of a batched link: one item of the batch's answer**, `null` where the answer holds
+ * none for the value, as a 404 is on a link of its own. The success body is projected whole, and the
+ * resolver hands each waiting field its item, so the field's type is the item's and no envelope type
+ * is named. A 404 is `null`, which the resolver reads as a chunk to retry one value at a time.
+ */
+export function batchResultOf(
+	route: EmittedRoute,
+	operation: HttpOperation,
+	projector: TypeProjector,
+	fieldName: string,
+	item: Type,
+): FieldResult {
+	const arms = armsOf(route, operation);
+	const projection: Record<string, Projection> = {};
+	for (const arm of arms) if (arm.status === 404) projection[arm.key] = { as: "null" };
+	errorsOf(arms, (status) => status !== 404, projection, true);
+	for (const arm of arms) if (classOf(arm.status) === 2) projection[arm.key] = { as: "value" };
+	const type = projector.output(item, {
+		name: `${typeNameOf(fieldName)}Item`,
+		owner: `${fieldName} batch item`,
+	});
+	return { type: asNullable(type), projection };
+}
+
 /** The result of a mutation: `<Name>Result` of its successes and declared 4xx, except 401, 403, 429. */
 export function mutationResultOf(
 	program: Program,

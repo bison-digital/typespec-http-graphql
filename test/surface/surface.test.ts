@@ -501,6 +501,221 @@ describe("graphql-name-collision on a parent type", () => {
 	});
 });
 
+describe("a link chosen by a kind", () => {
+	let surface: Surface;
+	beforeAll(async () => {
+		surface = await surfaceFor("link-keyed");
+	}, 300_000);
+
+	const armsOf = (name: string) =>
+		surface.links
+			.filter((link) => link.name === name)
+			.map((link) => ({
+				operationId: link.route.operationId,
+				property: link.when?.property.name,
+				parentWire: link.when?.parentWire,
+				values: link.when?.values,
+				description: link.description,
+			}));
+
+	it("keeps each arm of a field whose arms agree, one link per arm", () => {
+		expect(linksOf(surface)).toEqual([
+			"Review.author",
+			"Review.onceDescribed",
+			"Review.onceDescribed",
+			"Review.subject",
+			"Review.subject",
+		]);
+		expect(armsOf("subject")).toEqual([
+			{
+				operationId: "Authors_read",
+				property: "subject_type",
+				parentWire: "subject_type",
+				values: ["author"],
+				description: undefined,
+			},
+			{
+				operationId: "Widgets_read",
+				property: "subject_type",
+				parentWire: "subject_type",
+				values: ["widget", "gadget"],
+				description: undefined,
+			},
+		]);
+		expect(armsOf("author").map((arm) => arm.values)).toEqual([["author"]]);
+	});
+
+	it("gives every arm the one description an arm states", () => {
+		expect(armsOf("onceDescribed").map((arm) => arm.description)).toEqual([
+			"What the review is of.",
+			"What the review is of.",
+		]);
+	});
+
+	it("drops a link `when` cannot choose", () => {
+		const mismatched = surface.dropped.filter((d) => d.code === "link-when-mismatch");
+		expect(formatsOf(mismatched)).toEqual([
+			{ link: "Review.byNothing", reason: "`when` names no property" },
+			{ link: "Review.byRating", reason: "'rating' is no string property" },
+			{ link: "Review.misspelt", reason: "'subject_type' never holds 'editor'" },
+			{ link: "Review.noValue", reason: "`when` names no value of 'subject_type'" },
+			{
+				link: "Review.twoKeys",
+				reason:
+					"`when` names 2 properties, 'subject_type' and 'tone', where a link is chosen by one",
+			},
+		]);
+	});
+
+	it("drops a link `when` chooses by a property the parent's read body does not carry", () => {
+		expect(
+			formatsOf(
+				surface.dropped.filter(
+					(d) => d.code === "unknown-link-property" || d.code === "link-property-unreadable",
+				),
+			),
+		).toEqual([
+			{ link: "Review.byDraft", property: "draft_type", model: "Review" },
+			{ link: "Review.byMood", property: "mood", model: "Review" },
+		]);
+		expect(
+			surface.dropped
+				.filter((d) => d.code === "unknown-link-property" || d.code === "link-property-unreadable")
+				.map((d) => d.code)
+				.toSorted(),
+		).toEqual(["link-property-unreadable", "unknown-link-property"]);
+	});
+
+	it("drops every arm of links sharing a name that cannot be one field", () => {
+		const conflicts = surface.dropped.filter((d) => d.code === "link-arms-conflict");
+		expect(formatsOf(conflicts)).toEqual(
+			[
+				...Array(2).fill({ link: "Review.claimedTwice", reason: "'author' chooses two of them" }),
+				...Array(2).fill({ link: "Review.described", reason: "their descriptions differ" }),
+				...Array(2).fill({ link: "Review.listed", reason: "some bind a list and some do not" }),
+				...Array(2).fill({
+					link: "Review.mixed",
+					reason: "only some of them say `when` they are chosen",
+				}),
+				...Array(2).fill({
+					link: "Review.twoProperties",
+					reason: "they are chosen by different properties, 'subject_type' and 'tone'",
+				}),
+			].toSorted((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+		);
+	});
+
+	it("accounts for every arm", () => {
+		expect(codesOf(surface.dropped)).toEqual([
+			...Array(10).fill("link-arms-conflict"),
+			"link-property-unreadable",
+			...Array(5).fill("link-when-mismatch"),
+			"unknown-link-property",
+		]);
+		expectAccounted(surface, "link-keyed");
+	});
+});
+
+describe("a batched link", () => {
+	let surface: Surface;
+	beforeAll(async () => {
+		surface = await surfaceFor("link-batch");
+	}, 300_000);
+
+	const batchOf = (name: string) => {
+		const link = surface.links.find((candidate) => candidate.name === name);
+		return {
+			batch: link?.batch === undefined ? undefined : { ...link.batch, item: link.batch.item.name },
+			list: link?.bindings.map((binding) => binding.list),
+			maxItems: link?.maxItems,
+		};
+	};
+
+	it("keeps a batch of one value per parent, of a parent's list, and of a list `items` names", () => {
+		expect(linksOf(surface)).toEqual(["Shelf.author", "Shelf.authors", "Shelf.named"]);
+		expect(batchOf("author")).toEqual({
+			batch: { wire: "ids", key: "id", items: "authors", size: 50, item: "Author" },
+			list: [false],
+			maxItems: undefined,
+		});
+		expect(batchOf("authors")).toEqual({
+			batch: { wire: "ids", key: "id", items: undefined, size: undefined, item: "Author" },
+			list: [true],
+			maxItems: 10,
+		});
+		expect(batchOf("named").batch?.items).toBe("editors");
+	});
+
+	it("drops a link that cannot call its operation as a batch, saying why", () => {
+		expect(formatsOf(surface.dropped.filter((d) => d.code === "link-batch-invalid"))).toEqual(
+			[
+				{
+					link: "Shelf.ambiguous",
+					operationId: "BatchAuthors_twice",
+					reason: "its body holds 2 lists, 'authors' and 'editors'; name one with `items`",
+				},
+				{
+					link: "Shelf.atLeastTwo",
+					operationId: "BatchAuthors_atLeast",
+					reason: "'ids' declares @minItems(2), so one value alone is refused",
+				},
+				{
+					link: "Shelf.inPath",
+					operationId: "BatchAuthors_byPath",
+					reason: "'ids' is a path parameter, and a batch sends its values in the query",
+				},
+				{
+					link: "Shelf.misnamed",
+					operationId: "BatchAuthors_twice",
+					reason: "'readers' is no list property of its body",
+				},
+				{
+					link: "Shelf.noList",
+					operationId: "Authors_read",
+					reason: "it binds no list parameter",
+				},
+				{
+					link: "Shelf.ofStrings",
+					operationId: "BatchAuthors_strings",
+					reason: "its items are no model",
+				},
+				{
+					link: "Shelf.optionalKey",
+					operationId: "BatchAuthors_penned",
+					reason: "'nickname' is optional, so an item may have no key",
+				},
+				{
+					link: "Shelf.paged",
+					operationId: "BatchAuthors_pages",
+					reason: "it answers a page",
+				},
+				{
+					link: "Shelf.twoAnswers",
+					operationId: "BatchAuthors_answers",
+					reason: "it answers 2 success bodies",
+				},
+				{
+					link: "Shelf.unkeyed",
+					operationId: "BatchAuthors_bare",
+					reason: "'uid' is no property of 'Author'",
+				},
+				{
+					link: "Shelf.wrongKey",
+					operationId: "BatchAuthors_penned",
+					reason: "'count' never equals 'authorId', a value of another type",
+				},
+			].toSorted((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+		);
+	});
+
+	it("drops a value the batch parameter's items refuse as a type mismatch", () => {
+		expect(formatsOf(surface.dropped.filter((d) => d.code === "link-type-mismatch"))).toEqual([
+			{ link: "Shelf.byCount", parameter: "ids", property: "count" },
+		]);
+		expectAccounted(surface, "link-batch");
+	});
+});
+
 describe("link bindings", () => {
 	let surface: Surface;
 	beforeAll(async () => {

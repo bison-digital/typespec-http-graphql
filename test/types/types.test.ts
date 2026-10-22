@@ -413,6 +413,58 @@ describe("output objects", () => {
 		]);
 	});
 
+	/**
+	 * **"The first declared" is by file, in the order the program loaded them, then by position**:
+	 * `Paint`, in the file imported first, is declared before `Lamp`, though it sits further into
+	 * its file than `Lamp` does into its own.
+	 */
+	it("names a type two members hold after the first declared, across files", async () => {
+		const ordered = await serviceOf(here, "ordered");
+		const projector = new TypeProjector(
+			ordered.program,
+			new NameBook(),
+			ordered.emitted.typeSchemaNames,
+		);
+		const orderedModel = (name: string): Model => {
+			const type = typeOf(ordered, `Ordered.${name}`);
+			if (type.kind !== "Model") throw new Error(`Ordered.${name} is a ${type.kind}`);
+			return type;
+		};
+		projector.output(orderedModel("Lamp"));
+		projector.output(orderedModel("Paint"));
+		expect(fieldOf(projector, "Lamp", "tone").type).toEqual(named("PaintTone", true));
+		expect(fieldOf(projector, "Paint", "tone").type).toEqual(named("PaintTone", true));
+	});
+
+	/** design.md § Names: a template instance is named by its template's `@friendlyName`. */
+	it("names a template instance by its template's @friendlyName", () => {
+		const { projector } = fresh();
+		projector.output(model("Shapes.Shipment"));
+		expect(fieldOf(projector, "Shipment", "crate").type).toEqual(named("DialCrate", true));
+	});
+
+	/**
+	 * **The name a type was projected under, wherever this projector met it**: as output, or as input
+	 * at a visibility; `undefined` for one it never met.
+	 */
+	it("answers the name a type was projected under, as output or as input", () => {
+		const { projector } = fresh();
+		expect(projector.projectedNameOf(model("Shapes.Dial"))).toBeUndefined();
+		// Gauge reads differently at Update, so its input there is held apart from every other reading's.
+		projector.input(model("Shapes.Gauge"), Visibility.Update);
+		expect(projector.projectedNameOf(model("Shapes.Gauge"))).toBe("GaugeUpdateInput");
+		// Dial reads alike at every visibility: found past the Update inputs, which hold no entry for it.
+		projector.input(model("Shapes.Dial"), Visibility.Create, { name: "Dial", owner: "a test" });
+		expect(projector.projectedNameOf(model("Shapes.Dial"))).toBe("DialInput");
+		projector.input(model("Shapes.Shipment"), Visibility.Update, {
+			name: "Shipment",
+			owner: "a test",
+		});
+		expect(projector.projectedNameOf(model("Shapes.Shipment"))).toMatch(/^Shipment/);
+		projector.output(model("Shapes.Shipment"));
+		expect(projector.projectedNameOf(model("Shapes.Shipment"))).toBe("Shipment");
+	});
+
 	/** design.md § Types: a list's items are named after the list's member, shared with it. */
 	it.each([
 		["Sheet", "Ledger"],

@@ -85,13 +85,13 @@ using Bookshop;
 @@link(Book, "editions", BookEditions.list, #{ bookId: "id" });
 ```
 
-| decorator                                    | declares                                                                                                                                                                                                                                                                                                                                               |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@queryField(operation, name)`               | the root `Query` field `name`, resolved by `operation`                                                                                                                                                                                                                                                                                                 |
-| `@mutationField(operation, name)`            | the root `Mutation` field `name`, resolved by `operation`                                                                                                                                                                                                                                                                                              |
-| `@link(Model, name, operation, parameters?)` | a field `name` on `Model`'s object type, resolved by `operation`. Each entry of `parameters` fills one of the operation's parameters from one of the model's properties, both named as TypeSpec declares them; every other parameter becomes an argument of the field. A property that is a list of values makes the field a list, one call per value. |
-| `@inputHeader(operation, parameter)`         | the operation's optional header `parameter`, named as TypeSpec declares it, as input: an argument of a query field or link, a field of a mutation's input                                                                                                                                                                                              |
-| `@json(target)`                              | that `target`, a model property, model, union, enum or scalar, is meant to be the `JSON` scalar: no `projected-as-json` warning for it                                                                                                                                                                                                                 |
+| decorator                                              | declares                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@queryField(operation, name)`                         | the root `Query` field `name`, resolved by `operation`                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `@mutationField(operation, name)`                      | the root `Mutation` field `name`, resolved by `operation`                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `@link(Model, name, operation, parameters?, options?)` | a field `name` on `Model`'s object type, resolved by `operation`. Each entry of `parameters` fills one of the operation's parameters from one of the model's properties, both named as TypeSpec declares them; every other parameter becomes an argument of the field. A property that is a list of values makes the field a list, one call per value. `options.when` chooses the link by a property's value, and `options.batch` calls a batch read for many parents at once (see [Links](#links)). |
+| `@inputHeader(operation, parameter)`                   | the operation's optional header `parameter`, named as TypeSpec declares it, as input: an argument of a query field or link, a field of a mutation's input                                                                                                                                                                                                                                                                                                                                            |
+| `@json(target)`                                        | that `target`, a model property, model, union, enum or scalar, is meant to be the `JSON` scalar: no `projected-as-json` warning for it                                                                                                                                                                                                                                                                                                                                                               |
 
 - **Apply them with `@@`, in this one file**, so `rest.tsp` and your models stay free of GraphQL.
 - **They are `queryField` and `mutationField`, not `query` and `mutation`**, because
@@ -295,7 +295,8 @@ on Node's `diagnostics_channel`. Two things decide what a tracer sees of this sc
 - **Every field has a resolver**, reading its own property (see [Names](#names)), so
   `graphql:resolve`'s `isDefaultResolver` is false on all of them. A field that calls a handler names
   its operation in `extensions.operationId`, the id the REST route's operation has too: span those
-  and leave the rest.
+  and leave the rest. A link chosen by a kind names every operation it may call in
+  `extensions.operationIds`, since which one it calls is the parent's.
 
 ```ts
 // tracing.ts
@@ -373,6 +374,16 @@ export const schema = createSchema(
 `mutation`, and `fields` keyed by type name. A field with the name of a generated one throws when the
 schema is built, naming both. `schema.graphql` is the generated part alone; when you extend the
 schema, publish `printSchema` of the extended one.
+
+## Requests for other tools
+
+`graphqlRequestsOf(program)` answers, once this emitter has run in a compile, one request for each
+root field it served, per service: a document the schema accepts, its arguments as variables and its
+result selected to its leaf fields, and `variables(values)`, which turns a REST request's values into
+that document's variables, so the handler receives what that REST request would hand it. A tool that
+writes requests for the HTTP surface writes them for this one from it, and no document drifts from
+the schema. Before this emitter has run on a program it answers `undefined`. typespec-postman writes
+its collection's GraphQL requests this way.
 
 ## What a client sees
 
@@ -482,6 +493,46 @@ schema, publish `printSchema` of the extended one.
   `@cost(weight: "20") @listSize(assumedSize: 20)`, so `costLimit` still bounds the calls a
   document can make. Without one the link is dropped, `link-list-unbounded`. A link binds one list
   at most, and not to an `@list` operation (`link-list-not-bindable`).
+- **A link chosen by a kind is one field over several reads.** Where one property says what another
+  refers to, a review of a book or of an author, declare a link for each kind, each with `when`, under
+  one name:
+
+  ```tsp
+  @@link(Review, "subject", Books.read, #{ id: "subject_id" }, #{ when: #{ subject_type: "book" } });
+  @@link(Review, "subject", Authors.read, #{ authorId: "subject_id" }, #{ when: #{ subject_type: "author" } });
+  ```
+
+  `subject` is the union `ReviewSubject = Book | Author`, a member for each arm's type in the order
+  they are declared. Each review reads only the operation its kind names, one call per review; a
+  kind no arm names is `null`, and nothing is called. A `when` value may be a list,
+  `#{ subject_type: #["book", "ebook"] }`, and a link with `when` alone is a union of its one type, so
+  a second arm adds a member rather than changing the field's type under its clients.
+
+- **The arms of one field agree.** They are chosen by values of one property, no value chooses two,
+  all or none bind a list, they take the same arguments, and at most one gives a description, which
+  is the field's. Arms that do not are dropped, every one of them, `link-arms-conflict`; a `when` the
+  property cannot hold is `link-when-mismatch`, and an arm whose read answers no object type a union
+  can hold, a list or a connection say, is `link-arm-not-object`.
+- **A batched link reads many parents' values in one call** to a batch read: an operation taking a
+  list of ids in its query and answering the items for them, as AIP-231's `BatchGet` does.
+
+  ```tsp
+  // @get @route("/batch") batchGet(@query(#{ explode: true }) @maxItems(50) ids: string[]): { authors: Author[] } | NotFound;
+  @@link(Book, "author", Authors.batchGet, #{ ids: "author_id" }, #{ batch: #{ key: "id" } });
+  ```
+
+  `author` is an `Author`, the batch's item type. A batched link calls its batch read once for the
+  distinct values of every parent a document reaches at once, and each field answers the item whose
+  `key` is its value, or `null`. A document's books read their authors in one call, and the authors'
+  publishers, batched too, in one more.
+
+- **How a batch is sent.** The values wait until the resolvers a document is running have all run,
+  a macrotask; a value its parameter refuses is that field's `BAD_USER_INPUT`, and the rest are sent;
+  a batch parameter's `@maxItems` splits more values into several calls; and a 404 for several values
+  sends each of them again alone, so one missing id never blanks the others. A failure of the call is
+  every waiting field's error. `items` names the body's list where it holds more than one, and a link
+  bound to a list sends its items. A batch read that is not a `GET` with a list in its query, answers
+  a page, or answers items with no `key` is `link-batch-invalid`.
 
 ### Errors
 
@@ -540,7 +591,11 @@ warning `not-a-connection`.
 - `@cost(weight: "1")` is on every root field and link, and `@listSize` on every connection field,
   in `schema.graphql` (the IBM cost directives) and in each field's `extensions` (`cost`, `listSize`),
   so a validation rule can read them from the runtime schema. A link bound to a list is weighed at
-  its list's `@maxItems`, the calls it can make (see [Links](#links)).
+  its list's `@maxItems`, the calls it can make (see [Links](#links)). A batched link is weighed at
+  the calls its own values can take, at the batch parameter's `@maxItems` to a call, and one more for
+  each value where the batch can answer 404, since each is then sent again alone; Field Cost is
+  counted per field, so it never weighs less than the link it replaces. A link chosen by a kind is
+  weighed as its costliest arm.
 - A connection is sized by `first`, or by `first`'s default where a query sends none. Where `first`
   has no default, `assumedSize` is that largest page size; the specification allows it nowhere else
   (§9.2.4).
@@ -565,7 +620,8 @@ warning `not-a-connection`.
   not counted; a fragment's aliases count once for every place it is spread.
 - Calls are memoised per GraphQL context value, keyed by operation and input, so fifty books by one
   author cost one author read per request. Mutations are never memoised, and each mutation forgets
-  what the request has read, so a read after it is answered afresh.
+  what the request has read, so a read after it is answered afresh. A batched link's answers are
+  memoised per value, so a later batch asking for one again is answered from the first.
 
 ## Known limits
 
@@ -602,6 +658,10 @@ many services meet it.
 | `link-list-not-bindable`   | a link binds a second list, or binds a list to an `@list` operation                                                                                     | dropped                             |
 | `link-list-unbounded`      | a link binds a list that declares no `@maxItems`, so no cost limit could bound the calls it makes                                                       | dropped                             |
 | `link-not-safe`            | a link targets an operation whose method is not `GET`                                                                                                   | dropped                             |
+| `link-when-mismatch`       | a link's `when` names no property or several, a property that holds no string, or a value the property never holds                                      | dropped                             |
+| `link-arms-conflict`       | links of one model sharing a name, at least one with `when`, cannot be one field: see [Links](#links)                                                   | every party dropped                 |
+| `link-arm-not-object`      | an arm of a link chosen by a kind calls an operation answering no object type a union can hold                                                          | that arm dropped                    |
+| `link-batch-invalid`       | a link's `batch` names an operation that is no batch read of its values: no list in its query, a page, or items with no `key`                           | dropped                             |
 | `query-not-safe`           | a `@queryField` targets a method that is not safe                                                                                                       | kept: a `POST` search stays a query |
 | `head-operation`           | the operation is `HEAD`, which answers no body to select from                                                                                           | dropped                             |
 | `non-json-request`         | the request body is not JSON                                                                                                                            | dropped                             |

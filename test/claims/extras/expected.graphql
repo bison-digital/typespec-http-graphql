@@ -2,7 +2,9 @@
 # outcomes are its value, null and top-level errors; a mutation's are a <Name>Result union, the
 # `default` arm's model a member like any declared refusal; a bodyless success is Boolean on a query;
 # two success bodies are a union, a body that is no object wrapped in `value`; a required header is
-# input, a bodyless member carries `success`. Descriptions are left out: the comparison removes them
+# input, a bodyless member carries `success`; a link chosen by a kind is the union <Parent><Link> of its
+# arms' types, weighed as its costliest arm; a batched link is its batch's item type, weighed at one
+# call and one more for a 404 retried alone. Descriptions are left out: the comparison removes them
 # from both sides.
 
 directive @cost(
@@ -34,6 +36,7 @@ type Query {
 		@cost(weight: "1")
 	itemAsOf(id: String!, xAsOf: UTCDateTimeHuman!): Item @cost(weight: "1")
 	sortedItems(order: Order = NEWEST): [Item!] @cost(weight: "1")
+	reviews: [Review!] @cost(weight: "1")
 }
 
 enum Order {
@@ -130,3 +133,25 @@ type RemoveItemNotFound {
 }
 
 union RemoveItemResult = RemoveItemNoContent | RemoveItemNotFound
+
+type Review {
+	id: String!
+	subjectType: ReviewSubjectType!
+	subjectId: String!
+	itemId: String!
+	item: Item @cost(weight: "2")
+	subject: ReviewSubject @cost(weight: "1")
+}
+
+enum ReviewSubjectType {
+	ITEM
+	KIT
+	SET
+}
+
+type Kit {
+	id: String!
+	parts: Int!
+}
+
+union ReviewSubject = Item | Kit

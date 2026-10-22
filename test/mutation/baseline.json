@@ -1,32 +1,32 @@
 {
 	"note": "Mutation testing: Stryker over the modules stryker.config.mjs mutates, run by the suites vitest.mutation.config.ts names. Floors: mutants detected (killed, timed out, or failing to load), per file. Ceilings: per file, survivors and uncovered mutants, each with its reason in equivalents.json, and timeouts and load failures. Held by test/support/ratchet.ts.",
 	"floors": {
-		"detected:src/connections.ts": 193,
-		"detected:src/inputs.ts": 188,
-		"detected:src/results.ts": 310,
-		"detected:src/runtime.ts": 1284,
-		"detected:src/types.ts": 1265
+		"detected:src/connections.ts": 214,
+		"detected:src/inputs.ts": 196,
+		"detected:src/results.ts": 330,
+		"detected:src/runtime.ts": 1576,
+		"detected:src/types.ts": 1305
 	},
 	"ceilings": {
 		"no-coverage:src/connections.ts": 3,
 		"no-coverage:src/inputs.ts": 0,
 		"no-coverage:src/results.ts": 0,
-		"no-coverage:src/runtime.ts": 0,
-		"no-coverage:src/types.ts": 4,
+		"no-coverage:src/runtime.ts": 2,
+		"no-coverage:src/types.ts": 5,
 		"runtime-error:src/connections.ts": 0,
 		"runtime-error:src/inputs.ts": 0,
 		"runtime-error:src/results.ts": 0,
 		"runtime-error:src/runtime.ts": 24,
 		"runtime-error:src/types.ts": 3,
-		"survived:src/connections.ts": 11,
+		"survived:src/connections.ts": 15,
 		"survived:src/inputs.ts": 2,
 		"survived:src/results.ts": 0,
-		"survived:src/runtime.ts": 4,
-		"survived:src/types.ts": 14,
+		"survived:src/runtime.ts": 13,
+		"survived:src/types.ts": 18,
 		"timeout:src/connections.ts": 0,
 		"timeout:src/inputs.ts": 0,
 		"timeout:src/results.ts": 0,
-		"timeout:src/runtime.ts": 10,
+		"timeout:src/runtime.ts": 12,
 		"timeout:src/types.ts": 4
 	},
 	"loosened": [
@@ -61,6 +61,30 @@
 		{
 			"reason": "types.ts survived 13 -> 14: one new equivalent, namedByHint default case emptied returns undefined, read as false by both callers (equivalents.json); detected 1196 -> 1265 with the shared-anonymous-type rows",
 			"change": "ceilings survived:src/types.ts: regressed, baseline 13, measured 14"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings no-coverage:src/runtime.ts: regressed, baseline 0, measured 2"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings no-coverage:src/types.ts: regressed, baseline 4, measured 5"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings survived:src/connections.ts: regressed, baseline 11, measured 15"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings survived:src/runtime.ts: regressed, baseline 4, measured 13"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings survived:src/types.ts: regressed, baseline 14, measured 18"
+		},
+		{
+			"reason": "A fresh run over the code since this baseline was written: 0.2.0's declaration order, @json's projected-name lookup, the page size's maximum and @inputHeader, and 0.3.0's batched and kind-keyed links. Each new survivor and uncovered mutant (runtime.ts 9 and 2, types.ts 4 and 1, connections.ts 4) is in equivalents.json with why no test can tell it from the original. The two new timeouts are the batch's 404 retry made to retry a one-value chunk, stopped by their hit limit as check.test.ts requires. Detected rose with the code and its tests: runtime.ts 1284 to 1576, types.ts 1265 to 1305, results.ts 310 to 330, connections.ts 193 to 214, inputs.ts 188 to 196.",
+			"change": "ceilings timeout:src/runtime.ts: regressed, baseline 10, measured 12"
 		}
 	]
 }

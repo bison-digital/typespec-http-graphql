@@ -16,6 +16,35 @@ model FieldOptions {
   description?: string;
 }
 
+/** What a link's declaration may say beyond its name, its operation and its parameters. */
+model LinkOptions extends FieldOptions {
+  /**
+   * The value of one of the model's properties that chooses this link: a property name, and the value
+   * or values that call `operation`. Links of one model sharing a name, each with `when`, are one field
+   * whose type is the union of their types. A value no link names is `null`, and calls nothing.
+   */
+  when?: Record<string | string[]>;
+
+  /**
+   * Call `operation`, a batch read, once for the distinct values of every parent a document reaches
+   * at once, rather than once per value. The parameter this link fills from the parent is a list in
+   * the query, and each answer's items are matched to the values by `key`.
+   */
+  batch?: BatchOptions;
+}
+
+/** How a batch read's answer is matched back to the values it was sent. */
+model BatchOptions {
+  /** The item property whose value is the value the item was asked for, as TypeSpec declares it. */
+  key: string;
+
+  /**
+   * The answer's property holding the items, as TypeSpec declares it, where the answer is no list
+   * itself and holds more than one list.
+   */
+  items?: string;
+}
+
 /**
  * Expose `target` as the root Query field `name`.
  *
@@ -40,20 +69,22 @@ extern dec mutationField(target: Operation, name: valueof string, options?: valu
  * (parameter name → property name, both as declared in TypeSpec). Every other parameter the
  * operation takes becomes an argument of the field. A property that is a list of values the parameter
  * accepts makes the field a list, calling the operation once per value; the list must declare
- * `@maxItems`.
+ * `@maxItems`. Several links sharing a name, each with `when`, are one field that calls only the
+ * operation the parent's kind names.
  *
  * @param target The model whose GraphQL type gains the field.
  * @param name The field's name, used verbatim.
  * @param operation The operation the field calls. It must be a GET.
  * @param parameters Parameter name → property name, both as TypeSpec declares them.
- * @param options The field's description, where the operation's own does not suit GraphQL.
+ * @param options The field's description, where the operation's own does not suit GraphQL, and
+ * `when`, the value of a property that chooses this link.
  */
 extern dec link(
   target: Model,
   name: valueof string,
   operation: Operation,
   parameters?: valueof Record<string>,
-  options?: valueof FieldOptions,
+  options?: valueof LinkOptions,
 );
 
 /**

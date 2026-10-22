@@ -2,9 +2,11 @@ import {
 	type DiagnosticTarget,
 	getDiscriminator,
 	getMaxItems,
+	getMinItems,
 	isArrayModelType,
 	isList,
 	isNullType,
+	isVoidType,
 	type Model,
 	type ModelProperty,
 	type NoTarget,
@@ -19,6 +21,7 @@ import {
 	createMetadataInfo,
 	type HttpOperation,
 	type HttpOperationParameter,
+	type HttpStatusCodesEntry,
 	Visibility,
 } from "@typespec/http";
 import {
@@ -88,6 +91,19 @@ export interface LinkBinding {
 	readonly list: boolean;
 }
 
+/**
+ * **The value of a parent property that chooses a link**: one arm of a field chosen by a kind. The
+ * arms of one field are the links of one parent sharing its name, each chosen by values of the same
+ * property, no value choosing two.
+ */
+export interface LinkWhen {
+	readonly property: ModelProperty;
+	/** The parent's JSON wire key (`resolveEncodedName`, "application/json"). */
+	readonly parentWire: string;
+	/** The wire values that choose this arm, in the order `graphql.tsp` wrote them. */
+	readonly values: readonly string[];
+}
+
 export interface LinkField extends FieldDeclared {
 	readonly parent: Model;
 	readonly name: string;
@@ -100,7 +116,28 @@ export interface LinkField extends FieldDeclared {
 	 * its cost directives state. `undefined` for a link bound to no list.
 	 */
 	readonly maxItems: number | undefined;
+	/** What chooses this link, where `when` does; `undefined` for a link called for every parent. */
+	readonly when: LinkWhen | undefined;
+	/** Where the link calls a batch read: how a call carries the values and answers each one. */
+	readonly batch: LinkBatch | undefined;
 	readonly node: DiagnosticTarget;
+}
+
+/**
+ * **A batch read, as a link calls it**: the list parameter one call carries every value in, and how
+ * its answer is matched back to the parents that asked.
+ */
+export interface LinkBatch {
+	/** The list parameter's key in the handler's merged input. */
+	readonly wire: string;
+	/** The item's wire key holding the value it was asked for. */
+	readonly key: string;
+	/** The answer's wire key holding the items; `undefined` where the answer is the list itself. */
+	readonly items: string | undefined;
+	/** The list parameter's `@maxItems`: the most values one call carries. */
+	readonly size: number | undefined;
+	/** The item model: the field's type. */
+	readonly item: Model;
 }
 
 export interface SurfaceDiagnostic {
@@ -321,7 +358,7 @@ function propertyOf(model: Model, name: string): ModelProperty | undefined {
 }
 
 /** How a link reads in a message: its parent and its name, as `graphql.tsp` wrote them. */
-function linkLabel(declaration: LinkDeclaration): string {
+function linkLabel(declaration: { readonly parent: Model; readonly name: string }): string {
 	return `${declaration.parent.name}.${declaration.name}`;
 }
 
@@ -355,7 +392,227 @@ function boundListOf(type: Type): { readonly array: Type; readonly items: Type }
 /** A link that failed a check, or the bindings of one that passed them all. */
 type LinkCheck =
 	| { readonly failure: Failure }
-	| { readonly bindings: readonly LinkBinding[]; readonly maxItems: number | undefined };
+	| {
+			readonly bindings: readonly LinkBinding[];
+			readonly maxItems: number | undefined;
+			readonly when: LinkWhen | undefined;
+			readonly batch: LinkBatch | undefined;
+	  };
+
+/** Whether a declared response status is a success: an exact 2xx, or a range that reaches 2xx. */
+function isSuccessStatus(codes: HttpStatusCodesEntry): boolean {
+	if (codes === "*") return false;
+	if (typeof codes === "number") return codes >= 200 && codes < 300;
+	return codes.start < 300 && codes.end >= 200;
+}
+
+/**
+ * **How a link calls its operation as a batch, where `batch` says it does**, or why it cannot: the
+ * value goes into a list parameter in the query, which one value alone satisfies, of an operation
+ * that answers one body of items, a list or a model holding one, each item a model carrying the
+ * value it was asked for under `key`. The key accepts the bound value, or no item would ever match.
+ */
+function checkBatch(
+	program: Program,
+	declaration: LinkDeclaration,
+	owned: Owned,
+	filled:
+		| { readonly parameter: HttpOperationParameter; readonly property: ModelProperty }
+		| undefined,
+): { readonly batch: LinkBatch | undefined } | { readonly failure: Failure } {
+	const options = declaration.batch;
+	if (options === undefined) return { batch: undefined };
+	const { operationId, operation } = owned;
+	const fail = (reason: string) => ({
+		failure: {
+			code: "link-batch-invalid",
+			format: { link: linkLabel(declaration), operationId, reason },
+		},
+	});
+	if (filled === undefined) return fail("it binds no list parameter");
+	const { parameter, property } = filled;
+	const name = parameter.param.name;
+	if (parameter.type !== "query") {
+		return fail(
+			`'${name}' is a ${parameter.type} parameter, and a batch sends its values in the query`,
+		);
+	}
+	const array = boundListOf(parameter.param.type);
+	const least =
+		getMinItems(program, parameter.param) ??
+		(array === undefined ? undefined : getMinItems(program, array.array));
+	if (least !== undefined && least > 1) {
+		return fail(`'${name}' declares @minItems(${least}), so one value alone is refused`);
+	}
+	if (isList(program, operation.operation)) return fail("it answers a page");
+	const bodies = new Set<Type>();
+	for (const response of operation.responses) {
+		if (!isSuccessStatus(response.statusCodes)) continue;
+		for (const content of response.responses) {
+			const body = content.body?.type;
+			if (body !== undefined && !isVoidType(body)) bodies.add(body);
+		}
+	}
+	const [body, ...others] = bodies;
+	if (body === undefined) return fail("it answers no success body");
+	if (others.length > 0) return fail(`it answers ${bodies.size} success bodies`);
+
+	let items: string | undefined;
+	let item: Type;
+	if (body.kind === "Model" && isArrayModelType(body)) {
+		item = body.indexer.value;
+	} else if (body.kind === "Model") {
+		const lists = [...walkPropertiesInherited(body)].filter(
+			(candidate) => boundListOf(candidate.type) !== undefined,
+		);
+		const chosen =
+			options.items === undefined
+				? lists.length === 1
+					? lists[0]
+					: undefined
+				: lists.find((candidate) => candidate.name === options.items);
+		if (chosen === undefined) {
+			if (options.items !== undefined)
+				return fail(`'${options.items}' is no list property of its body`);
+			return fail(
+				lists.length === 0
+					? "its body holds no list"
+					: `its body holds ${lists.length} lists, ${quotedList(lists.map((list) => list.name))}; name one with \`items\``,
+			);
+		}
+		items = resolveEncodedName(program, chosen, "application/json");
+		item = boundListOf(chosen.type)?.items ?? chosen.type;
+	} else {
+		return fail("its body is no list");
+	}
+	if (item.kind !== "Model" || isArrayModelType(item)) return fail("its items are no model");
+
+	const key = propertyOf(item, options.key);
+	if (key === undefined) return fail(`'${options.key}' is no property of '${item.name}'`);
+	if (key.optional) return fail(`'${options.key}' is optional, so an item may have no key`);
+	if (!createMetadataInfo(program).isPayloadProperty(key, Visibility.Read)) {
+		return fail(`'${options.key}' is not in the body of '${item.name}' a client reads`);
+	}
+	const bound = boundListOf(property.type)?.items ?? property.type;
+	const accepted = acceptedTypesOf(key.type);
+	const matches = nonNullVariantsOf(bound).every((variant) =>
+		accepted.some((target) => $(program).type.isAssignableTo(variant, target)),
+	);
+	if (!matches) {
+		return fail(`'${options.key}' never equals '${property.name}', a value of another type`);
+	}
+	return {
+		batch: {
+			wire: parameter.name,
+			key: resolveEncodedName(program, key, "application/json"),
+			items,
+			size:
+				getMaxItems(program, parameter.param) ??
+				(array === undefined ? undefined : getMaxItems(program, array.array)),
+			item,
+		},
+	};
+}
+
+/** `'a' and 'b'`, `'a', 'b' and 'c'`: names, quoted, as a message lists them. */
+function quotedList(names: readonly string[]): string {
+	const quoted = names.map((name) => `'${name}'`);
+	const last = quoted.pop();
+	return quoted.length === 0 ? (last ?? "") : `${quoted.join(", ")} and ${last ?? ""}`;
+}
+
+/**
+ * **The string values a property's wire value can be**: `"any"` for a string, or one of the scalars
+ * that extend it, and the literals otherwise, from a literal, a union of literals or an enum, `null`
+ * set aside. `undefined` for a property that can hold anything else, which no `when` can name.
+ */
+function stringValuesOf(type: Type): "any" | ReadonlySet<string> | undefined {
+	const values = new Set<string>();
+	let any = false;
+	for (const variant of nonNullVariantsOf(type)) {
+		if (variant.kind === "Scalar") {
+			let scalar: typeof variant | undefined = variant;
+			while (scalar?.baseScalar !== undefined) scalar = scalar.baseScalar;
+			if (scalar?.name !== "string") return undefined;
+			any = true;
+			continue;
+		}
+		if (variant.kind === "String") {
+			values.add(variant.value);
+			continue;
+		}
+		if (variant.kind === "EnumMember") {
+			if (typeof variant.value === "number") return undefined;
+			values.add(variant.value ?? variant.name);
+			continue;
+		}
+		if (variant.kind === "Enum") {
+			for (const member of variant.members.values()) {
+				if (typeof member.value === "number") return undefined;
+				values.add(member.value ?? member.name);
+			}
+			continue;
+		}
+		if (variant.kind === "Union") {
+			const nested = stringValuesOf(variant);
+			if (nested === undefined) return undefined;
+			if (nested === "any") any = true;
+			else for (const value of nested) values.add(value);
+			continue;
+		}
+		return undefined;
+	}
+	return any ? "any" : values;
+}
+
+/**
+ * **What chooses a link, where `when` says**: exactly one property of the parent, carried in its read
+ * body, holding strings, and the values of it that choose the link, each one the property can hold.
+ * A value it never holds would leave the link `null` on every parent, with nothing to say why.
+ */
+function checkWhen(
+	program: Program,
+	declaration: LinkDeclaration,
+): { readonly when: LinkWhen | undefined } | { readonly failure: Failure } {
+	const { when } = declaration;
+	if (when === undefined) return { when: undefined };
+	const link = linkLabel(declaration);
+	const mismatch = (reason: string) => ({
+		failure: { code: "link-when-mismatch", format: { link, reason } },
+	});
+	const names = Object.keys(when);
+	const [name] = names;
+	if (name === undefined) return mismatch("`when` names no property");
+	if (names.length > 1) {
+		return mismatch(
+			`\`when\` names ${names.length} properties, ${quotedList(names)}, where a link is chosen by one`,
+		);
+	}
+	const property = propertyOf(declaration.parent, name);
+	const model = declaration.parent.name;
+	if (property === undefined) {
+		return { failure: { code: "unknown-link-property", format: { link, property: name, model } } };
+	}
+	if (!createMetadataInfo(program).isPayloadProperty(property, Visibility.Read)) {
+		return {
+			failure: { code: "link-property-unreadable", format: { link, property: name, model } },
+		};
+	}
+	const held = stringValuesOf(property.type);
+	if (held === undefined) return mismatch(`'${name}' is no string property`);
+	const given = when[name];
+	const values = typeof given === "string" ? [given] : [...(given ?? [])];
+	if (values.length === 0) return mismatch(`\`when\` names no value of '${name}'`);
+	const never = held === "any" ? undefined : values.find((value) => !held.has(value));
+	if (never !== undefined) return mismatch(`'${name}' never holds '${never}'`);
+	return {
+		when: {
+			property,
+			parentWire: resolveEncodedName(program, property, "application/json"),
+			values,
+		},
+	};
+}
 
 /**
  * The checks on a link, in order, after its name: safety, servability, then its bindings. The
@@ -391,6 +648,10 @@ function checkLink(program: Program, declaration: LinkDeclaration, owned: Owned)
 	}
 	const bindings: LinkBinding[] = [];
 	let maxItems: number | undefined;
+	/** The binding a batch's values go into: a list parameter, filled from a value of its items. */
+	let batched:
+		| { readonly parameter: HttpOperationParameter; readonly property: ModelProperty }
+		| undefined;
 	for (const [parameterName, propertyName] of entries) {
 		const parameter = bindableParameterOf(operation, parameterName);
 		const property = propertyOf(declaration.parent, propertyName);
@@ -414,11 +675,33 @@ function checkLink(program: Program, declaration: LinkDeclaration, owned: Owned)
 		 * the parameter's type or to a scalar it extends (`acceptedTypesOf`). Each non-null variant
 		 * must be assignable, which is the rule for the union as a whole.
 		 */
-		const accepted = acceptedTypesOf(parameter.param.type);
+		/**
+		 * **A batch's list parameter is filled one value at a time**, from a value its items accept or
+		 * from a list of them, since one call carries the values of many parents. Assigned whole, a
+		 * list property filling a list parameter would be a plain link sending one parent's list.
+		 */
+		const batchList =
+			declaration.batch === undefined ? undefined : boundListOf(parameter.param.type);
+		const accepted = acceptedTypesOf(batchList?.items ?? parameter.param.type);
 		const accepts = (type: Type): boolean =>
 			nonNullVariantsOf(type).every((variant) =>
 				accepted.some((target) => $(program).type.isAssignableTo(variant, target)),
 			);
+		if (batchList !== undefined) {
+			if (batched !== undefined) {
+				return {
+					failure: {
+						code: "link-batch-invalid",
+						format: {
+							link,
+							operationId,
+							reason: `it binds two list parameters, '${batched.parameter.param.name}' and '${parameterName}'`,
+						},
+					},
+				};
+			}
+			batched = { parameter, property };
+		}
 		const list = accepts(property.type) ? undefined : boundListOf(property.type);
 		if (list === undefined ? !accepts(property.type) : !accepts(list.items)) {
 			return {
@@ -441,7 +724,11 @@ function checkLink(program: Program, declaration: LinkDeclaration, owned: Owned)
 			list: list !== undefined,
 		});
 	}
-	return { bindings, maxItems };
+	const chosen = checkWhen(program, declaration);
+	if ("failure" in chosen) return chosen;
+	const batch = checkBatch(program, declaration, owned, batched);
+	if ("failure" in batch) return batch;
+	return { bindings, maxItems, when: chosen.when, batch: batch.batch };
 }
 
 /**
@@ -638,10 +925,12 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 
 	// ---- Links: name, safety, servability, bindings, then collisions. ----
 
-	const checkedLinks: (LinkDeclaration & {
+	const checkedLinks: (Omit<LinkDeclaration, "when" | "batch"> & {
 		readonly owned: Owned;
 		readonly bindings: readonly LinkBinding[];
 		readonly maxItems: number | undefined;
+		readonly when: LinkWhen | undefined;
+		readonly batch: LinkBatch | undefined;
 	})[] = [];
 	for (const declaration of linkDeclarations) {
 		const operation = owned.get(declaration.operation);
@@ -663,8 +952,39 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			owned: operation,
 			bindings: checked.bindings,
 			maxItems: checked.maxItems,
+			when: checked.when,
+			batch: checked.batch,
 		});
 	}
+
+	/**
+	 * **Links of one parent sharing a name, each chosen by `when`, are one field**, its arms. They
+	 * must say one thing about the field: each is chosen by values of the same property, no value
+	 * chooses two, all or none bind a list, and at most one description is given, which is the
+	 * field's. Arguments, which exist only once an arm is planned, are compared by `plan.ts`. A group
+	 * that cannot be one field drops every arm, as any collision of names drops every party.
+	 */
+	const groupOf = (link: (typeof checkedLinks)[number]) =>
+		checkedLinks.filter((other) => other.parent === link.parent && other.name === link.name);
+	const armsConflict = (parties: readonly (typeof checkedLinks)[number][]): string | undefined => {
+		const chosen = parties.flatMap((party) => (party.when === undefined ? [] : [party.when]));
+		if (chosen.length === 0) return undefined;
+		if (chosen.length < parties.length) return "only some of them say `when` they are chosen";
+		const properties = [...new Set(chosen.map((when) => when.property.name))];
+		if (properties.length > 1) {
+			return `they are chosen by different properties, ${quotedList(properties)}`;
+		}
+		const seen = new Set<string>();
+		for (const value of chosen.flatMap((when) => when.values)) {
+			if (seen.has(value)) return `'${value}' chooses two of them`;
+			seen.add(value);
+		}
+		const listed = parties.map((party) => party.bindings.some((binding) => binding.list));
+		if (new Set(listed).size > 1) return "some bind a list and some do not";
+		const given = new Set(parties.flatMap((party) => party.description ?? []));
+		if (given.size > 1) return "their descriptions differ";
+		return undefined;
+	};
 
 	/**
 	 * **A link is one more field of its parent's type**, so it collides with another link of that
@@ -674,11 +994,18 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 	 */
 	const links: LinkField[] = [];
 	for (const link of checkedLinks) {
-		const parties = checkedLinks.filter(
-			(other) => other.parent === link.parent && other.name === link.name,
-		);
+		const parties = groupOf(link);
+		const conflict = parties.length > 1 ? armsConflict(parties) : undefined;
+		if (conflict !== undefined) {
+			drop(link.node, {
+				code: "link-arms-conflict",
+				format: { link: linkLabel(link), reason: conflict },
+			});
+			continue;
+		}
 		const first = parties[0];
-		if (parties.length > 1 && first !== undefined) {
+		const keyed = parties.length > 1 && link.when !== undefined;
+		if (parties.length > 1 && first !== undefined && !keyed) {
 			const second = link === first ? parties[1] : link;
 			drop(link.node, {
 				code: "graphql-name-collision",
@@ -705,6 +1032,8 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			});
 			continue;
 		}
+		// The arms of one field share the one description any of them gives.
+		const description = parties.find((party) => party.description !== undefined)?.description;
 		links.push({
 			parent: link.parent,
 			name: link.name,
@@ -713,7 +1042,9 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			operation: link.owned.operation,
 			bindings: link.bindings,
 			maxItems: link.maxItems,
-			...declaredFor(link.owned.operation, link.description),
+			when: link.when,
+			batch: link.batch,
+			...declaredFor(link.owned.operation, description),
 			node: link.node,
 		});
 	}

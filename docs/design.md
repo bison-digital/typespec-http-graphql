@@ -121,6 +121,10 @@ The escape hatch below covers the odd exception without abandoning generation.
 
 - **The one point of contact is a dev-only test**: the handler signatures graded against the
   _published_ `typespec-hono`'s emitted `Operations`, as `typespec-http-mcp` grades its own.
+- **A sibling may read what this emitter planned, and nothing here changes for it.**
+  `graphqlRequestsOf(program)` is a read of the plans `$onEmit` recorded, one request per root field,
+  which typespec-postman reaches through `program.emitters`, so it reads the copy the compiler ran.
+  Asking writes, reports and plans nothing; before `$onEmit` has run it answers `undefined`.
 
 ### Why not an existing package
 
@@ -146,6 +150,22 @@ model FieldOptions {
   description?: string;
 }
 
+/** What a link's declaration may say beyond its name, its operation and its parameters. */
+model LinkOptions extends FieldOptions {
+  /** The value or values of one of the model's properties that choose this link. */
+  when?: Record<string | string[]>;
+  /** Call `operation`, a batch read, once for the values of many parents. */
+  batch?: BatchOptions;
+}
+
+/** How a batch read's answer is matched back to the values it was sent. */
+model BatchOptions {
+  /** The item property holding the value the item was asked for. */
+  key: string;
+  /** The answer's property holding the items, where it is no list and holds more than one. */
+  items?: string;
+}
+
 /** Expose `target` as the root Query field `name`. */
 extern dec queryField(target: Operation, name: valueof string, options?: valueof FieldOptions);
 
@@ -163,7 +183,7 @@ extern dec link(
   name: valueof string,
   operation: Operation,
   parameters?: valueof Record<string>,
-  options?: valueof FieldOptions,
+  options?: valueof LinkOptions,
 );
 
 /** Take `target`'s optional header `parameter` as input of the fields that call it. */
@@ -202,6 +222,15 @@ using Bookshop;
 - **`FieldOptions` is a model, not a positional argument**, as `@typespec/http` takes its options,
   so an option added later needs no new position. `description` replaces the operation's doc: a
   REST doc may name a 404 a GraphQL client never sees, or a query string it cannot send.
+- **A link chosen by a kind is several `@link`s under one name, each with `when`**, rather than one
+  declaration mapping kinds to operations. An operation is a type, never a TypeSpec value, so
+  `#{ book: Books.read }` cannot be written; a model expression of operations can, but each arm's
+  parameters would then be a second map keyed the same way, and the two would drift. Declarations
+  that must agree to be one thing have precedent in `@sharedRoute`, whose `shared-inconsistency`
+  refuses one operation of a route left without it, as `link-arms-conflict` refuses one arm left
+  without `when`.
+- **`batch` is an option of `@link`, not a decorator of its own**: a batched link binds, names and
+  checks its parent's properties as any link does, and differs only in how its calls are made.
 - **`@inputHeader` names its operation and a parameter, as `@link` does**, rather than the parameter
   itself: a declaration is checked against the operations a service serves, by identity, which a
   versioned spec projects anew, decorators re-run, and an operation is the established key.
@@ -241,6 +270,10 @@ these to fail CI sets `warn-as-error`.
 | A `@queryField` targets a method IANA's registry marks safe                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `query-not-safe` (warning only; the field is still emitted, for POST searches)                   |
 | The operation is servable as a field: not HEAD; a JSON request; every member of every body-carrying response served as JSON, with no bytes, stream or other media-type alternative, because the handler's result type must equal the HTTP server's and GraphQL cannot project those; an unnamed body has properties to merge, as MCP refuses a scalar, array or discriminated one; and no two inputs the library reports under one key (`EmittedRoute.sharedInputKeys`), since the handler's input is one object keyed by name | `non-json-request`, `non-json-response`, `head-operation`, `non-object-body`, `shared-input-key` |
 | `@link` targets a model that reaches the schema as an output type                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `link-target-unreachable`                                                                        |
+| A link's `when` names exactly one property of the parent, carried in its read body and holding strings, and values of it the property can hold                                                                                                                                                                                                                                                                                                                                                                                 | `link-when-mismatch`, or the property checks above                                               |
+| Links of one parent sharing a name, at least one with `when`, are one field: all with `when`, by one property, no value choosing two, all or none bound to a list, one description at most, and, once planned, the same arguments                                                                                                                                                                                                                                                                                              | `link-arms-conflict` (every party is dropped)                                                    |
+| Each arm of a link chosen by a kind answers an object type or a result union whose members its projection tags: a union's members are object types, resolved by the arm                                                                                                                                                                                                                                                                                                                                                        | `link-arm-not-object` (that arm is dropped)                                                      |
+| A batched link's operation is a batch read of its values: a list query parameter, which one value alone satisfies, filled from a value of its items or a list of them; not `@list`; one success body that is a list of models or holds one, `items` naming it where it holds more; and a required, readable `key` of the item whose type accepts the bound value                                                                                                                                                               | `link-batch-invalid`                                                                             |
 
 `emitted + dropped === declared` is asserted in the emitter.
 
@@ -366,9 +399,7 @@ A `@link(Parent, "name", operation, parameters)` gives the parent's GraphQL obje
   handler, through the same validation, as a root field.
 - **Deduplication per request.** Calls are memoised per GraphQL context value, keyed by operation
   and canonical input, so 50 books by one author cost one `Authors.read`. This is DataLoader's
-  deduplication without the library.
-  - It cannot _batch_ distinct ids into one call. That needs a batch operation to call (see Out of
-    scope).
+  deduplication without the library; a batched link, below, is its batching.
 - **Mutations are never memoised**, and no link may target a mutation's operation.
 - **A mutation clears the request's memo as it starts.** Mutations in one document run in turn and
   may change what a read answers, so a read memoised before one would answer stale after it.
@@ -392,6 +423,48 @@ A `@link(Parent, "name", operation, parameters)` gives the parent's GraphQL obje
     makes. The parent's read schema holds every response to it, and the field's cost directives
     state it (see Cost hints), so `costLimit` still bounds the calls a document can make. The
     many-to-many shape of a REST model, the edge of the graph a list of ids is.
+- **A link chosen by a kind** is the field several links of one parent share, each with `when`: a
+  reference whose target depends on another property, a review of a book or of an author. The
+  polymorphic association of a REST model; where the parent is itself a `@discriminated` union, a
+  link on each variant's model already gives each variant only its own field.
+  - **Its type is the union `<Parent><Link>`** of what its arms answer, in declaration order, even
+    with one arm: as for a mutation's `<Name>Result`, a second arm then adds a member rather than
+    changing the field's type. Each arm is planned enclosed as `<Parent><Link><Value>`, so no two arms
+    claim one name for a type they define.
+  - **Its resolver reads the kind off the parent's wire value** and calls only the arm it names, each
+    an ordinary link's resolver (the memo, the bindings, list links, batching, validation); a kind no
+    arm names, or none, is `null` without a call. Each answer is tagged with its arm's member, so the
+    union resolves by the arm, never by the body's shape. An arm answering a result union keeps the
+    member its own projection tags; one answering a discriminated union or an interface, whose type
+    is decided by shape, cannot be a member (`link-arm-not-object`).
+  - **One call per parent**, where a link per target called every target for every parent, a 404
+    for each wrong one.
+- **A batched link** calls a batch read, AIP-231's `BatchGet` over HTTP: one call for the distinct
+  values of every parent a document reaches at once, where the memo makes one per distinct value.
+  - **The batch parameter is a list in the query**, filled from a value of its items, or from a list
+    of them, which makes the field a list. A path or header list reaches the handler as text, and
+    AIP-231 puts the names in a `GET`'s query. A `POST` batch read with the ids in its body is out of
+    scope: a link fills no body.
+  - **The field's type is the batch's item**, `null` where the answer holds none for the value. The
+    items are matched by `key`, to the value as the operation's schema parses it, the first item a
+    key names winning, so a batch read that omits what it does not find works, and so does one that
+    answers in any order.
+  - **A wave is the resolvers one execution runs before it waits**: a value is enqueued as its
+    resolver runs, and the batch sent once the microtask queue has drained, by `setImmediate` where
+    the runtime has it and `setTimeout(0)` where it does not, as on Workers without `nodejs_compat`.
+    A microtask would split a wave whose parents settled at different depths. Fifty books make one
+    call for their authors, and the authors one more for their publishers.
+  - **Admission once, then each value alone.** Authorisation and the caller context run once per
+    batch and first, as for every call; each value is then checked alone by the operation's schema,
+    so one it refuses is that field's `BAD_USER_INPUT`, and the rest are sent. The values go in
+    chunks of the parameter's `@maxItems`.
+  - **A 404 for a chunk of several values sends each again alone.** AIP-231's batch is atomic, so a
+    404 says one of them is missing, not which; answered `null` for all, one dangling id would blank
+    its siblings, which the unbatched link never does. Any other failure is every waiting field's
+    error.
+  - **The memo keeps each value's answer**, so a later wave asking for it again is answered from the
+    first. The queue lives inside the memo, so a mutation's clearing clears it too. A context that is
+    no object has no memo, and each value is a batch of its own.
 
 ### Arguments and input
 
@@ -577,6 +650,13 @@ graphql.org points to:
   `@listSize(assumedSize: 20)` so what is selected below counts once per item. The specification
   weighs a field once however long its list (§5.3.2.2), so weighed at 1, `tags { id }` would cost one
   call where it makes twenty;
+- a batched link at the calls its own values can take, `ceil(L / n)`, `L` the values it holds (its
+  list's `@maxItems`, or one) and `n` the most one call carries (the batch parameter's `@maxItems`),
+  plus `L` where the batch can answer 404, since each value is then sent again alone. Chunks are
+  packed in order, so the calls a wave makes are at most the sum of its fields' weights
+  (`ceil(D / n) ≤ Σ ceil(Lᵢ / n)`). Field Cost counts per field, so a batched link never weighs less
+  than the link it replaces: the saving is in the calls made, and `costLimit` still bounds them;
+- a link chosen by a kind at its costliest arm, and its Type Cost at its costliest member (§7.2);
 - `@listSize(slicingArguments: ["first"], sizedFields: ["edges", "nodes"],
 requireOneSlicingArgument: false)` on every connection field, with `assumedSize`, the largest
   page size the operation accepts (see Connections), only where `first` has no default. The
@@ -772,6 +852,7 @@ This follows `typespec-http-mcp/docs/architecture.md`. `test/architecture/` pins
 | `sdl.ts`         | `schema.graphql` from the model, with directives, checked by `buildSchema`      | `model.ts`, `graphql`                                                                            |
 | `coexistence.ts` | peer emitters writing one directory with different library options              | the compiler                                                                                     |
 | `runtime.ts`     | what emitted code imports at run time                                           | **only `graphql`**; no Node builtins                                                             |
+| `requests.ts`    | the recorded plans, as a document per root field and variables from REST values | `model.ts`, `names.ts`, the compiler's and the library's types                                   |
 | `emitter.ts`     | orchestration, and `emitted + dropped === declared`                             | everything above                                                                                 |
 
 **Peer dependencies:** `graphql ^17`, `zod`, `@typespec/compiler`, `@typespec/http`,
@@ -804,6 +885,9 @@ Each row is trusted only after a defect has been planted, seen red and reverted,
 | input validation                            | the REST route's                                                                                                                                                             | a request REST answers 400 is `BAD_USER_INPUT` here; one REST accepts reaches the handler unchanged; the encoded list parameters, through REST and GraphQL, against the parameters the document publishes |
 | result members and nulls                    | the declared arms                                                                                                                                                            | every declared arm returned once and seen as its member, null or code                                                                                                                                     |
 | link deduplication                          | the call count                                                                                                                                                               | 50 parents with one bound id make one handler call per request, and two requests make two                                                                                                                 |
+| a link chosen by a kind                     | the arm the parent's kind names                                                                                                                                              | three reviews, two of books and one of an author, make three calls and resolve `Book`, `Book`, `Author`; a kind no arm names calls nothing                                                                |
+| batched links                               | the call count, and the wave                                                                                                                                                 | fifty books make one batch call; books, their authors and their publishers two; on Node and on workerd                                                                                                    |
+| requests for other tools                    | the served schema, and the REST request with the same values                                                                                                                 | every document validates, across the corpus; the handler receives what the REST request hands it                                                                                                          |
 | `emitted + dropped === declared`            | itself, with both terms non-zero                                                                                                                                             | declaration-check tests                                                                                                                                                                                   |
 | every emitted file, across the whole corpus | `tsc` strict, plus `validateSchema`                                                                                                                                          | the `@typespec/http-specs` corpus, every operation declared by a test-generated `graphql.tsp`, dropped scenarios named                                                                                    |
 | `runtime.ts`                                | importing only `graphql`, no Node builtin                                                                                                                                    | `test/architecture/`                                                                                                                                                                                      |
@@ -847,9 +931,8 @@ sense of § Independence, and `test/no-codegen.test.ts` does not forbid it.
 
 Each is named so that leaving it out is a decision, not an oversight.
 
-- **Batched links.** A link that collects distinct ids within a tick and calls a by-ids operation
-  once (AIP-231 `BatchGet*`). It needs a batch operation to call. Where a spec declares
-  one, `@link` can gain a batch form; v1's memo already removes duplicates.
+- **A batch read taking its ids in a request body.** A link fills path, query, header and cookie
+  parameters from its parent, never a body, so a `POST` batch read is not a batched link's operation.
 - **Global object identification** (`Node`, `node(id:)`).
 - **Subscriptions**, and SSE operations as subscriptions.
 - **Backward pagination** (`last`/`before`), since a continuation token pages forward only.

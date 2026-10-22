@@ -4,6 +4,7 @@ import {
 	type ArgumentPlan,
 	type BaseResolution,
 	type CallPlan,
+	callsOf,
 	type DefaultLiteral,
 	type InputFieldPlan,
 	type OutputFieldPlan,
@@ -133,6 +134,16 @@ function callLiteral(call: CallPlan, args: readonly ArgumentPlan[], indent: stri
 			`args: ${argumentRulesOf(args)}`,
 			`projection: ${JSON.stringify(call.projection)}`,
 			`connection: ${connection}`,
+			...(call.batch === undefined
+				? []
+				: [
+						`batch: ${JSON.stringify({
+							wire: call.batch.wire,
+							key: call.batch.key,
+							...(call.batch.items === undefined ? {} : { items: call.batch.items }),
+							...(call.batch.size === undefined ? {} : { size: call.batch.size }),
+						})}`,
+					]),
 		],
 		indent,
 	);
@@ -220,10 +231,31 @@ function outputFieldConfig(field: OutputFieldPlan, uses: Uses, indent: string): 
 			)}`,
 		);
 	}
+	const codes = uses.statusCodes ? ", STATUS_CODES" : "";
 	if (field.call !== undefined) {
 		uses.runtimeValues.add("resolverFor");
 		parts.push(
-			`resolve: resolverFor(${callLiteral(field.call, field.arguments, `${indent}\t`)}, handlersFor, deps, INPUT_RULES${uses.statusCodes ? ", STATUS_CODES" : ""})`,
+			`resolve: resolverFor(${callLiteral(field.call, field.arguments, `${indent}\t`)}, handlersFor, deps, INPUT_RULES${codes})`,
+		);
+	} else if (field.keyed !== undefined) {
+		/**
+		 * **A link chosen by a kind: each arm is an ordinary link's resolver**, handed the parent when
+		 * its values choose it, so the memo, the bindings and validation are the ones every link has.
+		 */
+		uses.runtimeValues.add("resolverFor");
+		uses.runtimeValues.add("keyedResolver");
+		const arms = field.keyed.arms.map((arm) =>
+			block(
+				[
+					`values: ${JSON.stringify(arm.values)}`,
+					...(arm.member === undefined ? [] : [`member: ${JSON.stringify(arm.member)}`]),
+					`resolve: resolverFor(${callLiteral(arm.call, arm.arguments, `${indent}\t\t\t`)}, handlersFor, deps, INPUT_RULES${codes})`,
+				],
+				`${indent}\t\t`,
+			),
+		);
+		parts.push(
+			`resolve: keyedResolver(${JSON.stringify(field.keyed.property)}, [\n${arms.map((arm) => `${indent}\t\t${arm}`).join(",\n")},\n${indent}\t])`,
 		);
 	} else {
 		/**
@@ -244,6 +276,9 @@ function outputFieldConfig(field: OutputFieldPlan, uses: Uses, indent: string): 
 	const extensions = [
 		...field.directives.map((d) => `${d.name}: ${JSON.stringify(d.arguments)}`),
 		...(field.call === undefined ? [] : [`operationId: ${JSON.stringify(field.call.operationId)}`]),
+		...(field.keyed === undefined
+			? []
+			: [`operationIds: ${JSON.stringify(field.keyed.arms.map((arm) => arm.call.operationId))}`]),
 	];
 	if (extensions.length > 0) parts.push(`extensions: ${inline(extensions)}`);
 	return `${objectKey(field.name)}: ${block(parts, indent)}`;
@@ -440,7 +475,7 @@ function checkOperations(plan: SchemaPlan): void {
 		...plan.types.flatMap((def) => (def.kind === "object" ? def.fields : [])),
 	];
 	for (const field of fields) {
-		if (field.call !== undefined) called.add(field.call.operationId);
+		for (const call of callsOf(field)) called.add(call.operationId);
 	}
 	const uncalled = [...planned].filter((id) => !called.has(id));
 	const unplanned = [...called].filter((id) => !planned.has(id));

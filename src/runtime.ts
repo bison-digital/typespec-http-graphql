@@ -196,6 +196,8 @@ export interface CallRuntime {
 				readonly maximum?: number;
 		  }
 		| undefined;
+	/** Where the call is a batch read: the bound key one call fills with every value, and its answer. */
+	readonly batch?: BatchRuntime | undefined;
 }
 
 /**
@@ -1665,6 +1667,16 @@ async function callOnce<X extends object, C>(
 	context: X,
 	input: Readonly<Record<string, unknown>>,
 ): Promise<unknown> {
+	const ctx = await admitted(call, deps, context);
+	return invoke(call, handlersFor, context, ctx, validated(call, input));
+}
+
+/** **Who may call**: authorisation, then the caller context, before anything of the input is read. */
+async function admitted<X extends object, C>(
+	call: CallRuntime,
+	deps: GraphQLDeps<X, C>,
+	context: X,
+): Promise<C> {
 	const verdict = await deps.authorize(context, call.security);
 	if (verdict === "unauthenticated") {
 		throw coded("UNAUTHENTICATED", `${call.operationId} requires an authenticated caller`);
@@ -1676,16 +1688,30 @@ async function callOnce<X extends object, C>(
 	if (ctx === null) {
 		throw coded("UNAUTHENTICATED", `${call.operationId} requires an authenticated caller`);
 	}
-	/**
-	 * **Validation is the HTTP surface's**: the same per-operation Zod schemas, so the handler
-	 * receives exactly what the REST route's handler would, defaults applied.
-	 */
+	return ctx;
+}
+
+/**
+ * **Validation is the HTTP surface's**: the same per-operation Zod schemas, so the handler receives
+ * exactly what the REST route's handler would, defaults applied.
+ */
+function validated(call: CallRuntime, input: Readonly<Record<string, unknown>>): unknown {
 	const parsed = call.input.safeParse(input);
 	if (!parsed.success) {
 		throw coded("BAD_USER_INPUT", `The input to ${call.operationId} is not valid`, {
 			issues: parsed.error.issues,
 		});
 	}
+	return parsed.data;
+}
+
+function invoke<X extends object, C>(
+	call: CallRuntime,
+	handlersFor: (context: X) => object,
+	context: X,
+	ctx: C,
+	parsed: unknown,
+): Awaitable<unknown> {
 	const handlers = handlersOf(handlersFor, context) as Readonly<
 		Record<string, ((ctx: C, input: unknown) => Awaitable<unknown>) | undefined>
 	>;
@@ -1693,7 +1719,169 @@ async function callOnce<X extends object, C>(
 	if (typeof handler !== "function") {
 		throw new Error(`handlersFor returned no handler for ${call.operationId}`);
 	}
-	return handler.call(handlers, ctx, parsed.data);
+	return handler.call(handlers, ctx, parsed);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Batched links: one call to a batch read for the distinct values of a wave of parents.
+// ---------------------------------------------------------------------------------------------
+
+/** How a link calls a batch read, as `graphql.gen.ts` writes it. */
+export interface BatchRuntime {
+	/** The handler input's wire key of the list parameter one call fills with every value. */
+	readonly wire: string;
+	/** The item's wire key holding the value it was asked for. */
+	readonly key: string;
+	/** The answer's wire key holding the items, where the answer is no list itself. */
+	readonly items?: string | undefined;
+	/** The most values one call carries: the list parameter's `@maxItems`. */
+	readonly size?: number | undefined;
+}
+
+/** One field's value, waiting for the batch that answers it. */
+interface Waiting {
+	readonly value: unknown;
+	readonly resolve: (item: unknown) => void;
+	readonly reject: (error: unknown) => void;
+}
+
+/** The values one batch read carries next, and how to send them: one call's fixed input, per request. */
+interface BatchQueue {
+	readonly waiting: Waiting[];
+	readonly send: (waiting: readonly Waiting[]) => Promise<void>;
+}
+
+/**
+ * **The batches a request has yet to send, beside its call memo**, keyed by the memo's own map: a
+ * mutation clears the memo as it starts, and its queues go with it, so nothing read before a
+ * mutation answers a field after it.
+ */
+const QUEUES = new WeakMap<
+	Map<string, Promise<unknown>>,
+	{ readonly queues: Map<string, BatchQueue>; scheduled: boolean }
+>();
+
+/**
+ * **Once every resolver of this wave has run**: after the microtask queue drains, by Node's
+ * `setImmediate`, or `setTimeout(0)` where there is none, as on Workers. A microtask would split a
+ * wave whose parents settled at different microtask depths. Reached through `globalThis`, since the
+ * runtime copy assumes no global beyond ECMAScript's.
+ */
+function afterWave(run: () => void): void {
+	const timers = globalThis as {
+		readonly setImmediate?: (run: () => void) => unknown;
+		readonly setTimeout?: (run: () => void, delay: number) => unknown;
+	};
+	if (typeof timers.setImmediate === "function") timers.setImmediate(run);
+	else if (typeof timers.setTimeout === "function") timers.setTimeout(run, 0);
+	else void Promise.resolve().then(run);
+}
+
+/** An issue about a value checked alone, at the bound key rather than at its index in a list of one. */
+function aloneIssue(wire: string, issue: { readonly path: readonly PropertyKey[] }): unknown {
+	const [head, index, ...rest] = issue.path;
+	return head === wire && index === 0 ? { ...issue, path: [wire, ...rest] } : issue;
+}
+
+/**
+ * **Send one batch read for `waiting`, and settle each.**
+ *
+ * 1. Admission once, first, as for every call: an unauthenticated caller is told so before any value
+ *    is read.
+ * 2. Each value alone through the operation's schema, so a value it refuses is that field's
+ *    `BAD_USER_INPUT` and the rest are sent. Values that parse alike are one.
+ * 3. Chunks of the parameter's `@maxItems`, one call each, the answer projected once and its items
+ *    matched to the parsed values by `key`, the first item a key names winning. A value with no item
+ *    is `null`.
+ * 4. A 404 from a chunk of several values says one of them is missing, as an all-or-nothing batch
+ *    read answers, so each is sent again alone: one dangling id never blanks its siblings.
+ */
+async function sendBatch<X extends object, C>(
+	call: CallRuntime,
+	batch: BatchRuntime,
+	input: Readonly<Record<string, unknown>>,
+	waiting: readonly Waiting[],
+	handlersFor: (context: X) => object,
+	deps: GraphQLDeps<X, C>,
+	context: X,
+	codes: StatusCodes,
+): Promise<void> {
+	let ctx: C;
+	try {
+		ctx = await admitted(call, deps, context);
+	} catch (error) {
+		for (const entry of waiting) entry.reject(error);
+		return;
+	}
+	const groups = new Map<string, { readonly parsed: unknown; readonly waiting: Waiting[] }>();
+	for (const entry of waiting) {
+		const alone = call.input.safeParse({ ...input, [batch.wire]: [entry.value] });
+		if (!alone.success) {
+			entry.reject(
+				coded("BAD_USER_INPUT", `The input to ${call.operationId} is not valid`, {
+					issues: alone.error.issues.map((issue) => aloneIssue(batch.wire, issue)),
+				}),
+			);
+			continue;
+		}
+		const sent = (alone.data as Readonly<Record<string, unknown>>)[batch.wire];
+		const parsed = Array.isArray(sent) ? (sent as readonly unknown[])[0] : sent;
+		const key = canonical(parsed);
+		const group = groups.get(key) ?? { parsed, waiting: [] };
+		group.waiting.push(entry);
+		groups.set(key, group);
+	}
+	const send = async (
+		chunk: readonly { readonly parsed: unknown; readonly waiting: Waiting[] }[],
+	) => {
+		const settle = (item: (parsed: unknown) => unknown) => {
+			for (const group of chunk)
+				for (const entry of group.waiting) entry.resolve(item(group.parsed));
+		};
+		let answer: unknown;
+		try {
+			const values = chunk.map((group) => group.waiting[0]?.value);
+			const result = await invoke(
+				call,
+				handlersFor,
+				context,
+				ctx,
+				validated(call, { ...input, [batch.wire]: values }),
+			);
+			answer = project(call, result, undefined, codes);
+		} catch (error) {
+			for (const group of chunk) for (const entry of group.waiting) entry.reject(error);
+			return;
+		}
+		if (answer === null) {
+			if (chunk.length > 1) {
+				await Promise.all(chunk.map((group) => send([group])));
+				return;
+			}
+			settle(() => null);
+			return;
+		}
+		const list =
+			batch.items === undefined
+				? answer
+				: typeof answer === "object" && own(answer, batch.items)
+					? (answer as Readonly<Record<string, unknown>>)[batch.items]
+					: undefined;
+		const items = new Map<string, unknown>();
+		for (const item of Array.isArray(list) ? (list as readonly unknown[]) : []) {
+			if (typeof item !== "object" || item === null || !own(item, batch.key)) continue;
+			const key = canonical((item as Readonly<Record<string, unknown>>)[batch.key]);
+			if (!items.has(key)) items.set(key, item);
+		}
+		settle((parsed) => items.get(canonical(parsed)) ?? null);
+	};
+	const all = [...groups.values()];
+	const size = batch.size === undefined || batch.size < 1 ? all.length : batch.size;
+	// Counted rather than stepped, so no size can make it a loop that never ends.
+	const chunks = Array.from({ length: Math.ceil(all.length / size) }, (_, index) =>
+		all.slice(index * size, (index + 1) * size),
+	);
+	await Promise.all(chunks.map(send));
 }
 
 /**
@@ -1831,10 +2019,78 @@ export function resolverFor<X extends object, C>(
 		return pending.then((result) => project(call, result, position, codes), asIssues);
 	};
 
+	/**
+	 * **One value of a batched link, waiting for the batch that carries it**: enqueued at once, with
+	 * the values of every other parent this wave reaches, and sent when the wave has run. The memo
+	 * keeps each value's answer, so a later wave asking again is answered from it.
+	 */
+	const resolveBatched = (
+		batch: BatchRuntime,
+		bound: Readonly<Record<string, unknown>>,
+		value: unknown,
+		args: Readonly<Record<string, unknown>>,
+		context: X,
+		info: GraphQLResolveInfo,
+	): Promise<unknown> => {
+		const input = { ...argumentsToWire(call, args, info, rules), ...bound, ...call.supplied };
+		const asIssues = (error: unknown): never => {
+			throw asArgumentIssues(error, call, info, rules);
+		};
+		const send = (waiting: readonly Waiting[]) =>
+			sendBatch(call, batch, input, waiting, handlersFor, deps, context, codes);
+		const keyed =
+			(typeof context === "object" || typeof context === "function") && context !== null;
+		// A context that is no object has no memo to batch in: each value is a batch of its own.
+		if (!keyed) {
+			return new Promise((resolve, reject) => {
+				void send([{ value, resolve, reject }]);
+			}).then(undefined, asIssues);
+		}
+		let calls = MEMO.get(context);
+		if (calls === undefined) {
+			calls = new Map();
+			MEMO.set(context, calls);
+		}
+		const queueKey = `${call.operationId}\u0000batch\u0000${canonical(input)}`;
+		const valueKey = `${queueKey}\u0000${canonical(value)}`;
+		let pending = calls.get(valueKey);
+		if (pending === undefined) {
+			let request = QUEUES.get(calls);
+			if (request === undefined) {
+				request = { queues: new Map(), scheduled: false };
+				QUEUES.set(calls, request);
+			}
+			const { queues } = request;
+			let queue = queues.get(queueKey);
+			if (queue === undefined) {
+				queue = { waiting: [], send };
+				queues.set(queueKey, queue);
+			}
+			const waiting = queue.waiting;
+			pending = new Promise((resolve, reject) => {
+				waiting.push({ value, resolve, reject });
+			});
+			calls.set(valueKey, pending);
+			if (!request.scheduled) {
+				request.scheduled = true;
+				const state = request;
+				afterWave(() => {
+					state.scheduled = false;
+					const due = [...state.queues.values()];
+					state.queues.clear();
+					for (const each of due) void each.send(each.waiting);
+				});
+			}
+		}
+		return pending.then(undefined, asIssues);
+	};
+
 	return (source, args: Readonly<Record<string, unknown>>, context, info) => {
 		const parent = typeof source === "object" && source !== null ? source : {};
 		const bound: Record<string, unknown> = {};
+		const { batch } = call;
 		let list: { readonly wire: string; readonly values: readonly unknown[] } | undefined;
+		let batched: unknown;
 		for (const binding of call.bound) {
 			const value = own(parent, binding.parent)
 				? (parent as Readonly<Record<string, unknown>>)[binding.parent]
@@ -1843,16 +2099,70 @@ export function resolverFor<X extends object, C>(
 			// The parent's read schema holds a bound list to an array; anything else is one value.
 			if (binding.list === true) {
 				list = { wire: binding.wire, values: Array.isArray(value) ? value : [value] };
+			} else if (binding.wire === batch?.wire) {
+				batched = value;
 			} else {
 				bound[binding.wire] = value;
 			}
 		}
-		if (list === undefined) return resolveBound(bound, args, context, info);
+		const one = (value: unknown, wire: string): Promise<unknown> =>
+			batch === undefined
+				? resolveBound({ ...bound, [wire]: value }, args, context, info)
+				: resolveBatched(batch, bound, value, args, context, info);
+		if (list === undefined) {
+			return batch === undefined
+				? resolveBound(bound, args, context, info)
+				: resolveBatched(batch, bound, batched, args, context, info);
+		}
 		const { wire, values } = list;
-		return values.map((value) =>
-			value === null || value === undefined
-				? null
-				: resolveBound({ ...bound, [wire]: value }, args, context, info),
-		);
+		return values.map((value) => (value === null || value === undefined ? null : one(value, wire)));
+	};
+}
+
+/** One arm of a link chosen by a kind, as `graphql.gen.ts` writes it. */
+export interface KeyedArm<X extends object> {
+	/** The wire values of the kind that choose this arm. */
+	readonly values: readonly string[];
+	/**
+	 * The union member each answer is, where the arm answers one object type. An arm answering a
+	 * result union has none here: its projection tags each answer's member by the arm the handler
+	 * returned.
+	 */
+	readonly member?: string;
+	/** The arm's own link resolver, `resolverFor` of its call. */
+	readonly resolve: GraphQLFieldResolver<unknown, X>;
+}
+
+/**
+ * **The resolver for a link chosen by a kind**: the parent's own `property` names the arm, and only
+ * that arm's operation is called, so a reference whose target depends on a kind costs one call per
+ * parent rather than one per target.
+ *
+ * A kind that is no string, or one no arm names, is `null` without a call, as an absent bound value
+ * is. Otherwise the arm resolves exactly as a link of its own does, and each answer it makes, every
+ * item of a list arm's, is tagged with the arm's member, which the field's union reads with
+ * `memberTypeOf`: the member is decided by the arm, never by the shape of the body.
+ */
+export function keyedResolver<X extends object>(
+	property: string,
+	arms: readonly KeyedArm<X>[],
+): GraphQLFieldResolver<unknown, X> {
+	const armOf = new Map<string, KeyedArm<X>>();
+	for (const arm of arms) for (const value of arm.values) armOf.set(value, arm);
+	return (source, args, context, info) => {
+		const parent = typeof source === "object" && source !== null ? source : {};
+		const kind = own(parent, property)
+			? (parent as Readonly<Record<string, unknown>>)[property]
+			: undefined;
+		const arm = typeof kind === "string" ? armOf.get(kind) : undefined;
+		if (arm === undefined) return null;
+		const answer: unknown = arm.resolve(source, args, context, info);
+		const { member } = arm;
+		if (member === undefined) return answer;
+		const tag = (value: unknown): unknown =>
+			value instanceof Promise
+				? value.then((settled: unknown) => tagged(settled, member))
+				: tagged(value, member);
+		return Array.isArray(answer) ? answer.map(tag) : tag(answer);
 	};
 }

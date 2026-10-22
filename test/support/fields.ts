@@ -63,6 +63,8 @@ export function linkField(
 		operation,
 		bindings,
 		maxItems: undefined,
+		when: undefined,
+		batch: undefined,
 		description: undefined,
 		inputHeaders: new Set(),
 		node: operation.operation,

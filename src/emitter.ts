@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
 	type EmitContext,
 	emitFile,
+	getNamespaceFullName,
 	NoTarget,
 	type Program,
 	resolvePath,
@@ -13,6 +14,7 @@ import { renderOperations } from "./handlers.js";
 import { PACKAGE_NAME, reportDiagnostic } from "./lib.js";
 import { planService } from "./plan.js";
 import { renderSchemaModule } from "./render.js";
+import { beginRecord, record } from "./requests.js";
 import { renderSdl } from "./sdl.js";
 import { type SurfaceDiagnostic, surfaceOf } from "./surface.js";
 
@@ -137,6 +139,16 @@ async function emitService(
 		path: resolvePath(emitted.outputDir, "schema.graphql"),
 		content: renderSdl(planned.plan),
 	});
+	record(program, {
+		service: getNamespaceFullName(emitted.service.namespace),
+		plan: planned.plan,
+		roots: new Map(
+			surface.roots.map((root) => [
+				`${root.kind}:${root.name}`,
+				{ operation: root.operation, route: root.route },
+			]),
+		),
+	});
 }
 
 /**
@@ -159,6 +171,7 @@ export async function $onEmit(context: EmitContext): Promise<void> {
 		});
 	}
 	const reportDecided = decidedReporter(context.program);
+	beginRecord(context.program);
 	for (const emitted of await emitHttpZod(context)) {
 		await emitService(context.program, emitted, reportDecided);
 	}

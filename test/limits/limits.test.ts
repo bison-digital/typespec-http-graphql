@@ -622,6 +622,32 @@ describe("typeCost: the specification's rules, worked by hand", () => {
 		expect(typeCostOf(EXAMPLE_10, `{ topProducts }`)).toBe(1);
 	});
 
+	/** `__typename` is no field of the type's own, and holds a name, not a value of any type. */
+	it("counts nothing for __typename", () => {
+		expect(typeCostOf(EXAMPLE_1, `{ __typename }`)).toBe(1);
+	});
+
+	/**
+	 * **A document is costed as it is given**, and one not yet validated may select an object with
+	 * no subfields: the object is still one value of its type.
+	 */
+	it("counts an object selected with no subfields as the value it is", () => {
+		const schema = schemaOf(`
+			type Book { title: String }
+			type Query { book: Book }
+		`);
+		expect(typeCostOf(schema, `{ book }`)).toBe(2);
+	});
+
+	/** An interface no object type implements can hold no value, so nothing below it counts. */
+	it("§7.2: counts nothing for an interface no type implements", () => {
+		const schema = schemaOf(`
+			interface Shelved { title: String }
+			type Query { shelved: Shelved }
+		`);
+		expect(typeCostOf(schema, `{ shelved { title } }`)).toBe(1);
+	});
+
 	/** `@cost` on OBJECT and on SCALAR weighs every value of the type: Query 1, five users at 3.0, each with a `Money` at 0.5. */
 	it("§7.1: a type's own @cost weighs each value of it", () => {
 		const schema = schemaOf(`

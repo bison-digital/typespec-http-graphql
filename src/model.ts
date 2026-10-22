@@ -132,6 +132,23 @@ export interface CallPlan {
 	readonly supplied: Readonly<Record<string, string>>;
 	readonly projection: Readonly<Record<string, Projection>>;
 	readonly connection: ConnectionPlan | undefined;
+	/** Where the call is a batch read: how one call carries every value, and answers each. */
+	readonly batch?: BatchPlan;
+}
+
+/**
+ * **A batch read, as a link calls it**: the bound wire key whose values one call carries as a list,
+ * and how the answer's items are matched back to them.
+ */
+export interface BatchPlan {
+	/** The handler input's wire key of the list parameter: one of `bound`'s, filled with every value. */
+	readonly wire: string;
+	/** The item's wire key holding the value it was asked for. */
+	readonly key: string;
+	/** The answer's wire key holding the items; `undefined` where the answer is the list itself. */
+	readonly items: string | undefined;
+	/** The most values one call carries: the list parameter's `@maxItems`. */
+	readonly size: number | undefined;
 }
 
 export interface OutputFieldPlan {
@@ -143,7 +160,35 @@ export interface OutputFieldPlan {
 	readonly deprecationReason: string | undefined;
 	readonly arguments: readonly ArgumentPlan[];
 	readonly call: CallPlan | undefined;
+	/** A link chosen by a kind: its arms, each with its own call. `call` is then `undefined`. */
+	readonly keyed?: KeyedPlan;
 	readonly directives: readonly AppliedDirective[];
+}
+
+/** **A link chosen by a kind**: the parent property whose value picks an arm, and the arms. */
+export interface KeyedPlan {
+	/** The parent's wire key holding the kind. */
+	readonly property: string;
+	readonly arms: readonly KeyedArmPlan[];
+}
+
+export interface KeyedArmPlan {
+	/** The wire values of the kind that choose this arm. */
+	readonly values: readonly string[];
+	readonly call: CallPlan;
+	/** The arm's own arguments: the field's, which each arm routes to its operation by its own rules. */
+	readonly arguments: readonly ArgumentPlan[];
+	/**
+	 * The union member each answer is, where the arm answers one object type; `undefined` where it
+	 * answers a result union, whose projection tags each answer's member itself.
+	 */
+	readonly member: string | undefined;
+}
+
+/** Every call a field makes: its own, or each of its arms'. */
+export function callsOf(field: OutputFieldPlan): readonly CallPlan[] {
+	if (field.call !== undefined) return [field.call];
+	return field.keyed?.arms.map((arm) => arm.call) ?? [];
 }
 
 /**

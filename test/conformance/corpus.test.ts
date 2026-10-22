@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { buildSchema, type GraphQLSchema, validateSchema } from "graphql";
+import type { Program } from "@typespec/compiler";
+import { buildSchema, type GraphQLSchema, parse, validate, validateSchema } from "graphql";
 import { beforeAll, describe, expect, it } from "vitest";
 import { compileFixture } from "../support/compile-fixture.js";
 import {
@@ -68,6 +69,25 @@ interface Scenario {
 	readonly diagnostics: readonly { readonly code: string; readonly severity: string }[];
 	readonly threw: string | undefined;
 	readonly sdl: string | undefined;
+	/** Each request `graphqlRequestsOf` writes, read from the copy of this emitter the compiler ran. */
+	readonly documents: readonly { readonly field: string; readonly document: string }[];
+}
+
+type RequestsOf = (program: unknown) =>
+	| readonly {
+			readonly requests: readonly { readonly field: string; readonly document: string }[];
+	  }[]
+	| undefined;
+
+/** The requests the emitter the compiler ran planned for `program`: the seam another tool reads. */
+function documentsOf(program: Program): Scenario["documents"] {
+	const ref = program.emitters.find((emitter) => emitter.metadata.name === "typespec-http-graphql");
+	const read = (
+		ref?.library.entrypoint?.esmExports as { graphqlRequestsOf?: RequestsOf } | undefined
+	)?.graphqlRequestsOf;
+	return (read?.(program) ?? []).flatMap((service) =>
+		service.requests.map(({ field, document }) => ({ field, document })),
+	);
 }
 
 let scenarios: Scenario[] = [];
@@ -80,15 +100,16 @@ beforeAll(async () => {
 		const dir = join(outputRoot, name, "emitted");
 		const surface = await declareEveryOperation(main, spec);
 		let diagnostics: Scenario["diagnostics"] = [];
+		let documents: Scenario["documents"] = [];
 		let threw: string | undefined;
 		try {
-			diagnostics = (
-				await compileFixture(spec, "graphql", {
-					outDir: dir,
-					expectedErrors: libraryRefusalsOf(name),
-					openApiVersions: openApiVersionsOf(`corpus:${name}`),
-				})
-			).diagnostics;
+			const compiled = await compileFixture(spec, "graphql", {
+				outDir: dir,
+				expectedErrors: libraryRefusalsOf(name),
+				openApiVersions: openApiVersionsOf(`corpus:${name}`),
+			});
+			diagnostics = compiled.diagnostics;
+			documents = documentsOf(compiled.program);
 		} catch (error) {
 			threw = error instanceof Error ? error.message : String(error);
 		}
@@ -102,6 +123,7 @@ beforeAll(async () => {
 			diagnostics,
 			threw,
 			sdl: existsSync(schema) ? readFileSync(schema, "utf8") : undefined,
+			documents,
 		});
 	}
 	scenarios = collected;
@@ -243,6 +265,32 @@ describe("every emitted artefact is sound", () => {
 		// Non-vacuity: a run that built nothing would report no failure either.
 		expect(built).toBeGreaterThanOrEqual(55);
 	}, 1_800_000);
+
+	/**
+	 * **Every request `graphqlRequestsOf` writes is a document the scenario's schema accepts**, a
+	 * root field of every shape the corpus has among them: what a tool writing requests for this
+	 * surface, a Postman collection, sends.
+	 */
+	it("writes, for every root field it serves, a document its schema accepts", () => {
+		const failures: string[] = [];
+		let checked = 0;
+		for (const scenario of scenarios) {
+			if (scenario.sdl === undefined) continue;
+			const schema = buildSchema(scenario.sdl);
+			expect(scenario.documents.map((d) => d.field).toSorted(), scenario.name).toEqual(
+				rootFieldsOf(scenario.sdl),
+			);
+			for (const { field, document } of scenario.documents) {
+				checked += 1;
+				const errors = validate(schema, parse(document));
+				if (errors.length > 0)
+					failures.push(`${scenario.name} ${field}: ${errors[0]?.message ?? ""}`);
+			}
+		}
+		expect(failures).toEqual([]);
+		// Non-vacuity: a corpus that wrote no request would break no rule above.
+		expect(checked).toBeGreaterThanOrEqual(200);
+	});
 
 	it("typechecks every emitted directory under strict, exactOptionalPropertyTypes, noUnusedLocals and types: []", () => {
 		const failures: string[] = [];

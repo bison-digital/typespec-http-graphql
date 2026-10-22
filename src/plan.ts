@@ -12,12 +12,19 @@ import {
 	listOf,
 	named,
 	type OutputFieldPlan,
+	type Projection,
 	type SchemaPlan,
 	type TypeDef,
 	type TypeRef,
 } from "./model.js";
 import { type Collision, NameBook, typeNameOf } from "./names.js";
-import { type FieldResult, mutationResultOf, queryResultOf, statusCodesTable } from "./results.js";
+import {
+	batchResultOf,
+	type FieldResult,
+	mutationResultOf,
+	queryResultOf,
+	statusCodesTable,
+} from "./results.js";
 import type { LinkField, RootField, Surface, SurfaceDiagnostic } from "./surface.js";
 import { TypeProjector } from "./types.js";
 
@@ -56,6 +63,18 @@ interface Planned {
 	readonly parent: string | undefined;
 	readonly field: OutputFieldPlan;
 	readonly verdict: ConnectionVerdict;
+	/**
+	 * Where this is one arm of a link chosen by a kind: the field its arms share, and the member it
+	 * answers. Each arm is planned, kept and dropped as the declaration it is, and the arms that
+	 * survive are written as one field.
+	 */
+	readonly arm?: { readonly group: KeyedGroup; readonly member: string | undefined };
+}
+
+/** The field the arms of a link chosen by a kind are one of. Shared by identity between its arms. */
+interface KeyedGroup {
+	/** The parent's wire key holding the kind. */
+	readonly property: string;
 }
 
 /**
@@ -85,6 +104,32 @@ function listLinkDirectivesOf(maxItems: number): readonly AppliedDirective[] {
 	return [
 		{ name: "cost", arguments: { weight: String(maxItems) } },
 		{ name: "listSize", arguments: { assumedSize: maxItems } },
+	];
+}
+
+/**
+ * **A batched link's weight is the calls it can make**: one call carries the values of many parents,
+ * so a field's own values take `ceil(L / n)` calls at most, `L` the most it holds (its list's
+ * `@maxItems`, or one) and `n` the most one call carries (the batch parameter's `@maxItems`, or every
+ * value). A batch that can answer 404 has each of those values retried alone, `L` calls more. Field
+ * Cost is counted per field, so a batched link never weighs less than the link it replaces: the
+ * saving is in calls made, and a cost limit still bounds them.
+ */
+function batchLinkDirectivesOf(
+	maxItems: number | undefined,
+	size: number | undefined,
+	projection: Readonly<Record<string, Projection>>,
+): readonly AppliedDirective[] {
+	const held = maxItems ?? 1;
+	const retried = Object.values(projection).some(
+		(arm) => arm.as === "null" || (arm.as === "byStatus" && arm.nullOn404),
+	);
+	const weight = (size === undefined ? 1 : Math.ceil(held / size)) + (retried ? held : 0);
+	return [
+		{ name: "cost", arguments: { weight: String(weight) } },
+		...(maxItems === undefined
+			? []
+			: [{ name: "listSize" as const, arguments: { assumedSize: maxItems } }]),
 	];
 }
 
@@ -194,6 +239,7 @@ function fieldOf(
 ): OutputFieldPlan {
 	const operation = declaration.operation.operation;
 	const maxItems = "bindings" in declaration ? declaration.maxItems : undefined;
+	const batch = "bindings" in declaration ? declaration.batch : undefined;
 	return {
 		name: declaration.name,
 		wire: declaration.name,
@@ -221,13 +267,20 @@ function fieldOf(
 			supplied: inputs.supplied,
 			projection: result.projection,
 			connection,
+			...(batch === undefined
+				? {}
+				: {
+						batch: { wire: batch.wire, key: batch.key, items: batch.items, size: batch.size },
+					}),
 		},
 		directives:
-			maxItems !== undefined
-				? listLinkDirectivesOf(maxItems)
-				: connection === undefined
-					? [COST]
-					: [COST, listSizeOf(connection)],
+			batch !== undefined
+				? batchLinkDirectivesOf(maxItems, batch.size, result.projection)
+				: maxItems !== undefined
+					? listLinkDirectivesOf(maxItems)
+					: connection === undefined
+						? [COST]
+						: [COST, listSizeOf(connection)],
 	};
 }
 
@@ -259,7 +312,11 @@ function planRoot(program: Program, root: RootField, projector: TypeProjector): 
 	};
 }
 
-/** A link: a query field of its parent, its generated types named `<Parent><Link>...`. */
+/**
+ * A link: a query field of its parent, its generated types named `<Parent><Link>...`, and an arm of
+ * a link chosen by a kind `<Parent><Link><Value>...`, after the first value that chooses it, so that
+ * no two arms claim one name.
+ */
 function planLink(
 	program: Program,
 	link: LinkField,
@@ -270,15 +327,12 @@ function planLink(
 	const connection = verdict.kind === "connection" ? verdict.plan : undefined;
 	const connectionType =
 		connection === undefined ? undefined : defineConnection(connection, projector);
-	const enclosing = `${parent}${typeNameOf(link.name)}`;
-	const result = queryResultOf(
-		program,
-		link.route,
-		link.operation,
-		projector,
-		enclosing,
-		connectionType,
-	);
+	const [value] = link.when?.values ?? [];
+	const enclosing = `${parent}${typeNameOf(link.name)}${value === undefined ? "" : typeNameOf(value)}`;
+	const result =
+		link.batch === undefined
+			? queryResultOf(program, link.route, link.operation, projector, enclosing, connectionType)
+			: batchResultOf(link.route, link.operation, projector, enclosing, link.batch.item);
 	const inputs = queryInputsOf(program, link, projector, connection);
 	return {
 		kind: "link",
@@ -287,6 +341,173 @@ function planLink(
 		parent,
 		field: fieldOf(program, link, "link", inputs, result, connection),
 		verdict,
+	};
+}
+
+/**
+ * **What an arm answers, as union members**: its own object type, or the members of the result union
+ * its projection tags; otherwise why no union can hold it. A discriminated union or an interface
+ * resolves an answer by its shape, never by the arm, so neither can stand in a union resolved by
+ * arms; a list, a scalar or a connection is no object type at all.
+ */
+function membersOfArm(
+	planned: Planned,
+	defs: ReadonlyMap<string, TypeDef>,
+): { readonly members: readonly string[]; readonly member: string | undefined } | string {
+	if (planned.verdict.kind === "connection") return "a connection";
+	const listed = "bindings" in planned.declaration && planned.declaration.maxItems !== undefined;
+	const ref =
+		listed && planned.field.type.kind === "list" ? planned.field.type.of : planned.field.type;
+	if (ref.kind === "list") return "a list";
+	const def = defs.get(ref.name);
+	if (def?.kind === "object") return { members: [ref.name], member: ref.name };
+	if (def?.kind === "union" && def.resolveBy.kind === "member") {
+		return { members: def.members, member: undefined };
+	}
+	if (def?.kind === "union") return "a union resolved by its discriminator";
+	if (def?.kind === "interface") return "an interface";
+	if (def?.kind === "enum") return "an enum";
+	const projections = Object.values(planned.field.call?.projection ?? {});
+	if (ref.name === "Boolean" && projections.some((projection) => projection.as === "true")) {
+		return "no body";
+	}
+	return "a scalar";
+}
+
+/** An argument as the field states it once: name, type and default. */
+function argumentSignatureOf(field: OutputFieldPlan): string {
+	const text = (ref: TypeRef): string =>
+		`${ref.kind === "list" ? `[${text(ref.of)}]` : ref.name}${ref.nonNull ? "!" : ""}`;
+	return JSON.stringify(
+		field.arguments.map((argument) => [argument.name, text(argument.type), argument.defaultValue]),
+	);
+}
+
+/**
+ * **The arms of one link chosen by a kind, planned together**, once their parent is reachable:
+ * each arm that can be a member, then their arguments, which the field states once, then the union
+ * `<Parent><Link>` of what they answer, in the order they were declared. The field is that union even
+ * with one arm, as a mutation's result is a union with one member: a second arm then adds a member
+ * rather than changing the field's type under every client.
+ */
+function planArms(
+	program: Program,
+	links: readonly LinkField[],
+	parent: string,
+	projector: TypeProjector,
+	warnings: SurfaceDiagnostic[],
+): { readonly planned: readonly Planned[]; readonly dropped: number } {
+	const arms = links.map((link) => planLink(program, link, parent, projector));
+	const defs = defsByName(projector);
+	const members: (Planned & {
+		readonly members: readonly string[];
+		readonly member: string | undefined;
+	})[] = [];
+	let dropped = 0;
+	for (const arm of arms) {
+		const answered = membersOfArm(arm, defs);
+		if (typeof answered === "string") {
+			warnings.push({
+				code: "link-arm-not-object",
+				target: arm.declaration.node,
+				format: {
+					link: `${(arm.declaration as LinkField).parent.name}.${arm.field.name}`,
+					operationId: arm.declaration.route.operationId,
+					answers: answered,
+				},
+			});
+			dropped += 1;
+			continue;
+		}
+		members.push({ ...arm, ...answered });
+	}
+	const [first] = members;
+	if (first === undefined) return { planned: [], dropped };
+	if (new Set(members.map((arm) => argumentSignatureOf(arm.field))).size > 1) {
+		for (const arm of members) {
+			warnings.push({
+				code: "link-arms-conflict",
+				target: arm.declaration.node,
+				format: {
+					link: `${(arm.declaration as LinkField).parent.name}.${arm.field.name}`,
+					reason: "their arguments differ",
+				},
+			});
+		}
+		return { planned: [], dropped: dropped + members.length };
+	}
+	const union = `${parent}${typeNameOf(first.field.name)}`;
+	projector.define({
+		kind: "union",
+		name: union,
+		description: undefined,
+		members: [...new Set(members.flatMap((arm) => arm.members))],
+		resolveBy: { kind: "member" },
+	});
+	const when = (first.declaration as LinkField).when;
+	const group: KeyedGroup = { property: when?.parentWire ?? "" };
+	const planned = members.map((arm): Planned => {
+		const listed = arm.field.type.kind === "list";
+		const type = listed ? listOf(named(union, false), false) : named(union, false);
+		return {
+			kind: arm.kind,
+			key: arm.key,
+			declaration: arm.declaration,
+			parent: arm.parent,
+			field: { ...arm.field, type },
+			verdict: arm.verdict,
+			arm: { group, member: arm.member },
+		};
+	});
+	return { planned, dropped };
+}
+
+/**
+ * **One field from the arms of a link chosen by a kind that survived**: the union they share, the
+ * arguments each states alike, and the description `graphql.tsp` gives, never an operation's, since
+ * each arm's describes a different read. Weighed as its costliest arm.
+ */
+function keyedFieldOf(arms: readonly Planned[]): OutputFieldPlan {
+	const [first] = arms;
+	if (first?.arm === undefined) throw new Error("keyedFieldOf: no arm");
+	const weights = arms.map((arm) =>
+		Number(
+			arm.field.directives.find((directive) => directive.name === "cost")?.arguments["weight"],
+		),
+	);
+	const sizes = arms.flatMap((arm) => {
+		const size = arm.field.directives.find((directive) => directive.name === "listSize")?.arguments[
+			"assumedSize"
+		];
+		return typeof size === "number" ? [size] : [];
+	});
+	return {
+		name: first.field.name,
+		wire: first.field.wire,
+		type: first.field.type,
+		description: first.declaration.description,
+		deprecationReason: undefined,
+		arguments: first.field.arguments,
+		call: undefined,
+		keyed: {
+			property: first.arm.group.property,
+			arms: arms.map((arm) => {
+				const call = arm.field.call;
+				if (call === undefined) throw new Error(`keyedFieldOf: ${arm.key} calls nothing`);
+				return {
+					values: (arm.declaration as LinkField).when?.values ?? [],
+					call,
+					arguments: arm.field.arguments,
+					member: arm.arm?.member,
+				};
+			}),
+		},
+		directives: [
+			{ name: "cost", arguments: { weight: String(Math.max(...weights)) } },
+			...(sizes.length === 0
+				? []
+				: [{ name: "listSize" as const, arguments: { assumedSize: Math.max(...sizes) } }]),
+		],
 	};
 }
 
@@ -363,6 +584,8 @@ export function planService(
 			return parent !== undefined && reachable.has(parent) ? [[link, parent] as const] : [];
 		});
 		grew = ready.length > 0;
+		/** The arms of each link chosen by a kind, by field, planned together once every one is ready. */
+		const keyed = new Map<string, LinkField[]>();
 		for (const [link, parent] of ready) {
 			pending.splice(pending.indexOf(link), 1);
 			const own = defs.get(parent);
@@ -379,7 +602,20 @@ export function planService(
 				dropped += 1;
 				continue;
 			}
+			if (link.when !== undefined) {
+				const key = `${parent}.${link.name}`;
+				keyed.set(key, [...(keyed.get(key) ?? []), link]);
+				continue;
+			}
 			planned.push(planLink(program, link, parent, projector));
+		}
+		for (const links of keyed.values()) {
+			const [first] = links;
+			const parent = first === undefined ? undefined : projector.outputNameOf(first.parent);
+			if (parent === undefined) continue;
+			const arms = planArms(program, links, parent, projector, warnings);
+			planned.push(...arms.planned);
+			dropped += arms.dropped;
 		}
 	}
 	for (const link of pending) {
@@ -387,8 +623,17 @@ export function planService(
 		dropped += 1;
 	}
 
-	// Each field's argument names are claimed, so two parameters converting to one name collide.
+	/**
+	 * Each field's argument names are claimed, so two parameters converting to one name collide. A
+	 * link chosen by a kind states its arguments once, for every arm, which `planArms` has already
+	 * held alike; its first arm claims them.
+	 */
+	const claimedBy = new Set<KeyedGroup>();
 	for (const entry of planned) {
+		if (entry.arm !== undefined) {
+			if (claimedBy.has(entry.arm.group)) continue;
+			claimedBy.add(entry.arm.group);
+		}
 		for (const argument of entry.field.arguments) {
 			book.claim(`${entry.key}(${argument.name})`, `${entry.key}(${argument.wire})`);
 		}
@@ -420,9 +665,19 @@ export function planService(
 	}
 
 	const linksByParent = new Map<string, OutputFieldPlan[]>();
+	const armsOf = new Map<KeyedGroup, Planned[]>();
 	for (const entry of survivors) {
 		if (entry.parent === undefined) continue;
+		if (entry.arm !== undefined) {
+			armsOf.set(entry.arm.group, [...(armsOf.get(entry.arm.group) ?? []), entry]);
+			continue;
+		}
 		linksByParent.set(entry.parent, [...(linksByParent.get(entry.parent) ?? []), entry.field]);
+	}
+	for (const arms of armsOf.values()) {
+		const parent = arms[0]?.parent;
+		if (parent === undefined) continue;
+		linksByParent.set(parent, [...(linksByParent.get(parent) ?? []), keyedFieldOf(arms)]);
 	}
 	for (const [parent, fields] of linksByParent) {
 		projector.addFields(

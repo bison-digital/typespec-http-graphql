@@ -7,7 +7,7 @@ module table is the source; this is that table as built.
 
 ```
                        lib.ts            options, diagnostics, PACKAGE_NAME, state keys
-                       decorators.ts     record @queryField, @mutationField, @link
+                       decorators.ts     record @queryField, @mutationField, @link, @inputHeader, @json
                           |
    DERIVE (read the program)                        RENDER (produce text)       CONSUMER (copied out)
      surface.ts      declarations -> checked surface   handlers.ts                 runtime.ts
@@ -24,26 +24,27 @@ module table is the source; this is that table as built.
 
 ## Modules
 
-| module           | owns                                                                                                | may reach                                                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `index.ts`       | the public API: `typespec-http-zod`'s re-exported, `$onEmit`, `$lib`, `$decorators`                 | the modules it re-exports                                                                |
-| `tsp-index.ts`   | what TypeSpec loads: `$lib` and `$decorators`                                                       | `lib.ts`, `decorators.ts`                                                                |
-| `lib.ts`         | the options (the library's, forwarded unchanged), the diagnostics, the package name, the state keys | the compiler, the library                                                                |
-| `decorators.ts`  | `$queryField`, `$mutationField`, `$link`, which record and check nothing; their accessors           | the compiler, `lib.ts`                                                                   |
-| `surface.ts`     | the declarations a service owns, every check in design.md, and the dropped ones with their reasons  | the compiler and its typekit, `@typespec/http`, the library, `decorators.ts`, `names.ts` |
-| `names.ts`       | GraphQL names, by upstream's pipeline; reason phrases; `NameBook`                                   | `change-case` only                                                                       |
-| `model.ts`       | the plan's vocabulary: `TypeRef`, `TypeDef`, field and call plans                                   | the library's types                                                                      |
-| `types.ts`       | TypeSpec types as GraphQL types; visibility variants; scalars                                       | the compiler, `@typespec/http`                                                           |
-| `inputs.ts`      | arguments, input objects, header mechanics, wire keys                                               | the compiler, `@typespec/http`, the library's types                                      |
-| `connections.ts` | the five core paging decorators as a connection plan, or why an operation is not one                | the compiler                                                                             |
-| `results.ts`     | declared arms as query and mutation results: members, wrappers, codes                               | the library                                                                              |
-| `plan.ts`        | one service's `SchemaPlan`, from its surface                                                        | the four modules above                                                                   |
-| `handlers.ts`    | the text of `GraphQLOperations<C>`: each handler's input and result types                           | `model.ts`, the library's types                                                          |
-| `render.ts`      | the text of `graphql.gen.ts`                                                                        | `model.ts`, the library's types                                                          |
-| `sdl.ts`         | `schema.graphql`, with applied directives, checked by `buildSchema` and `validateSchema`            | `model.ts`, `graphql`                                                                    |
-| `coexistence.ts` | peer emitters writing one directory with different library options                                  | the compiler                                                                             |
-| `runtime.ts`     | what emitted code imports at run time                                                               | **only `graphql` values and `zod` types**                                                |
-| `emitter.ts`     | orchestration, and `emitted + dropped === declared` for every service                               | everything above                                                                         |
+| module           | owns                                                                                                                                | may reach                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `index.ts`       | the public API: `typespec-http-zod`'s re-exported, `$onEmit`, `$lib`, `$decorators`, `graphqlRequestsOf`                            | the modules it re-exports                                                                |
+| `tsp-index.ts`   | what TypeSpec loads: `$lib` and `$decorators`                                                                                       | `lib.ts`, `decorators.ts`                                                                |
+| `lib.ts`         | the options (the library's, forwarded unchanged), the diagnostics, the package name, the state keys                                 | the compiler, the library                                                                |
+| `decorators.ts`  | `$queryField`, `$mutationField`, `$link`, which record and check nothing; their accessors                                           | the compiler, `lib.ts`                                                                   |
+| `surface.ts`     | the declarations a service owns, every check in design.md, and the dropped ones with their reasons                                  | the compiler and its typekit, `@typespec/http`, the library, `decorators.ts`, `names.ts` |
+| `names.ts`       | GraphQL names, by upstream's pipeline; reason phrases; `NameBook`                                                                   | `change-case` only                                                                       |
+| `model.ts`       | the plan's vocabulary: `TypeRef`, `TypeDef`, field and call plans                                                                   | the library's types                                                                      |
+| `types.ts`       | TypeSpec types as GraphQL types; visibility variants; scalars                                                                       | the compiler, `@typespec/http`                                                           |
+| `inputs.ts`      | arguments, input objects, header mechanics, wire keys                                                                               | the compiler, `@typespec/http`, the library's types                                      |
+| `connections.ts` | the five core paging decorators as a connection plan, or why an operation is not one                                                | the compiler                                                                             |
+| `results.ts`     | declared arms as query and mutation results: members, wrappers, codes                                                               | the library                                                                              |
+| `plan.ts`        | one service's `SchemaPlan`, from its surface                                                                                        | the four modules above                                                                   |
+| `handlers.ts`    | the text of `GraphQLOperations<C>`: each handler's input and result types                                                           | `model.ts`, the library's types                                                          |
+| `render.ts`      | the text of `graphql.gen.ts`                                                                                                        | `model.ts`, the library's types                                                          |
+| `sdl.ts`         | `schema.graphql`, with applied directives, checked by `buildSchema` and `validateSchema`                                            | `model.ts`, `graphql`                                                                    |
+| `coexistence.ts` | peer emitters writing one directory with different library options                                                                  | the compiler                                                                             |
+| `runtime.ts`     | what emitted code imports at run time                                                                                               | **only `graphql` values and `zod` types**                                                |
+| `requests.ts`    | what was planned, as requests: a document per root field, and a REST request's values as its variables, read by `graphqlRequestsOf` | `model.ts`, `names.ts`, the compiler's and the library's types                           |
+| `emitter.ts`     | orchestration, and `emitted + dropped === declared` for every service; records each plan for `requests.ts`                          | everything above                                                                         |
 
 ## The rules that are enforced rather than intended
 

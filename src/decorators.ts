@@ -30,6 +30,18 @@ export interface FieldOptions {
 	readonly description?: string;
 }
 
+/** What `LinkOptions` arrives as. `when` maps one property name to the value or values that choose it. */
+export interface LinkOptions extends FieldOptions {
+	readonly when?: Readonly<Record<string, string | readonly string[]>>;
+	readonly batch?: BatchOptions;
+}
+
+/** What `BatchOptions` arrives as: property names, as TypeSpec declares them. */
+export interface BatchOptions {
+	readonly key: string;
+	readonly items?: string;
+}
+
 /** One `@queryField` or `@mutationField` application. */
 export interface RootDeclaration {
 	readonly kind: "query" | "mutation";
@@ -49,6 +61,10 @@ export interface LinkDeclaration {
 	readonly parameters: Readonly<Record<string, string>>;
 	/** The field's own description, in place of the operation's, where `graphql.tsp` gives one. */
 	readonly description: string | undefined;
+	/** Property name → the value or values that choose this link, as `graphql.tsp` wrote them. */
+	readonly when: Readonly<Record<string, string | readonly string[]>> | undefined;
+	/** Where the link calls a batch read: how its answer is matched to the values it was sent. */
+	readonly batch: BatchOptions | undefined;
 	readonly node: DiagnosticTarget;
 }
 
@@ -124,7 +140,7 @@ export const $link = (
 	name: string,
 	operation: Operation,
 	parameters?: Record<string, string>,
-	options?: FieldOptions,
+	options?: LinkOptions,
 ): void => {
 	record<LinkDeclaration>(context.program, GraphQLKeys.links, target, {
 		parent: target,
@@ -132,6 +148,8 @@ export const $link = (
 		operation,
 		parameters: parameters ?? {},
 		description: options?.description,
+		when: options?.when,
+		batch: options?.batch,
 		node: context.decoratorTarget,
 	});
 };

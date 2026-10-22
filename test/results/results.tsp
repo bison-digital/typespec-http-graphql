@@ -197,6 +197,15 @@ interface Widgets {
   @post @route("/login") login(): Moved;
   @post @route("/devoid") devoid(): Voided | Found;
   @post @route("/lapse") lapse(): Widget | Lapsing | Problem;
+  // A batch read: its body is the list a batched link's items are taken from.
+  @get @route("/batch") batch(@query(#{ explode: true }) ids: string[]): {
+    widgets: Widget[];
+  } | NotFound | Invalid | Broken | Problem | NotModifiedResponse;
+  @get @route("/batch-anonymous") batchAnonymous(@query(#{ explode: true }) ids: string[]): {
+    id: string;
+    label: string;
+  }[];
+
   // Parts, for which the library declares no schema: surface.ts refuses it before planning.
   @get @route("/parts") parts(): {
     @header contentType: "multipart/form-data";

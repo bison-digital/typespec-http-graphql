@@ -936,6 +936,16 @@ model Dial {
 
 model DialCreate is Create<Dial>;
 
+/** A template named by its `@friendlyName`, wherever an instance of it is used. */
+@friendlyName("{name}Crate", T)
+model Crated<T> {
+  item: T;
+}
+
+model Shipment {
+  crate: Crated<Dial>;
+}
+
 // Instances whose composed names leave out an argument: a literal beside a named one, and a union.
 model Twin<A, B> {
   tag: {

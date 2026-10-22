@@ -182,8 +182,8 @@
 			"mutator": "ConditionalExpression",
 			"original": "parameter.param.type.kind === \"String\"",
 			"replacement": "true",
-			"line": "if (dispositionOf(parameter) === \"supplied\" && parameter.param.type.kind === \"String\") {",
-			"reason": "`dispositionOf` answers `supplied` only on its branch where `parameter.param.type.kind === \"String\"`, so the conjunct is true wherever it is evaluated; it narrows the type for `.value`."
+			"line": "parameter.param.type.kind === \"String\"",
+			"reason": "`dispositionOf` answers `supplied` only on its branch where `parameter.param.type.kind === \"String\"`, whatever `@inputHeader` names, so the conjunct is true wherever it is evaluated; it narrows the type for `.value`."
 		},
 		{
 			"file": "src/inputs.ts",
@@ -304,6 +304,166 @@
 			"replacement": "default:",
 			"line": "default:",
 			"reason": "`namedByHint`'s default case emptied falls out of the switch, and the function returns `undefined` for every type that is neither a union nor a model. Both callers read it as `false` and nothing else: `#holdingsOf` as `!namedByHint(property.type)`, which skips the property either way, and the model case itself inside `isArrayModelType(type) && namedByHint(type.indexer.value)`, a disjunct of a `return`, where `undefined` and `false` are both falsy and `||` yields the second operand only when the first is false (`type.name === \"\"`, a boolean). The return type is `boolean` at compile time only; no caller stores, compares or serialises the value. Neither an output, a name nor a warning can tell them apart."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[]",
+			"replacement": "[\"Stryker was here\"]",
+			"line": "for (const item of Array.isArray(list) ? (list as readonly unknown[]) : []) {",
+			"reason": "Iterates `[\"Stryker was here\"]` in place of `[]` where the answer holds no list: its one item is a string, which the next line passes over (no object, no key), so no item is indexed either way. Unreachable from a plan besides: surface.ts requires the items property be a list, and the arm's schema refuses a body whose items are not one."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[value]",
+			"replacement": "[]",
+			"line": "list = { wire: binding.wire, values: Array.isArray(value) ? value : [value] };",
+			"reason": "A list binding's parent value that is no array, wrapped as a list of one: unreachable, since a link binds a list only where the property is a list (surface.ts boundListOf), and the parent value is the parent's body as its read schema parsed it, which holds that property to an array."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "index === 0",
+			"replacement": "true",
+			"line": "return head === wire && index === 0 ? { ...issue, path: [wire, ...rest] } : issue;",
+			"reason": "A value is checked alone as a list of one, so an issue the operation's schema raises about it has the batch parameter's key and then index 0: where the path starts with that key, `index === 0` is always true. An issue about any other input starts with that input's key, and is left as it is either way. Checked by the refusals at the value (`[\"ids\"]`), at another input (`[\"shop\"]`) and at a list argument's item (`[\"tags\", 0]`) in test/runtime/batch.test.ts."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "OptionalChaining",
+			"original": "group.waiting[0]?.value",
+			"replacement": "group.waiting[0].value",
+			"line": "const values = chunk.map((group) => group.waiting[0]?.value);",
+			"reason": "A group is made with the waiting value that names it pushed into it at once (sendBatch's loop over `waiting`), and no group is made empty, so `group.waiting[0]` always exists; the optional chain is for the type, whose index may be undefined under noUncheckedIndexedAccess."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ArrowFunction",
+			"original": "() => null",
+			"replacement": "() => undefined",
+			"line": "settle(() => null);",
+			"reason": "Settles each waiting field with `undefined` in place of `null`: graphql-js completes a field whose resolver settles `undefined` exactly as one that settles `null` (completeValue: `if (result == null) return null`), so no response can tell them apart."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof answer === \"object\" && own(answer, batch.items)",
+			"replacement": "true",
+			"line": ": typeof answer === \"object\" && own(answer, batch.items)",
+			"reason": "`batch.items` is set only where the success body is a model holding the items (surface.ts checkBatch names the list property, or refuses `its body holds 2 lists ...`), and the answer here is that body as the success arm's schema parsed it, so it is always an object: `typeof answer === \"object\"` is always true, and reading the property where it is no own key gives `undefined`, as the else branch does, for any key but an Object.prototype member's, which typespec-http-zod warns of (`optional-prototype-name`)."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "LogicalOperator",
+			"original": "typeof answer === \"object\" && own(answer, batch.items)",
+			"replacement": "typeof answer === \"object\" || own(answer, batch.items)",
+			"line": ": typeof answer === \"object\" && own(answer, batch.items)",
+			"reason": "As for the condition replaced by true: the answer is always an object (the success body, a model, where `batch.items` is set: surface.ts checkBatch), so `||` short-circuits to true, and reading an absent property gives `undefined`, as the else branch does."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof answer === \"object\"",
+			"replacement": "true",
+			"line": ": typeof answer === \"object\" && own(answer, batch.items)",
+			"reason": "`batch.items` is set only where the success body is a model holding the items (surface.ts checkBatch names the list property, or refuses `its body holds 2 lists ...`), and the answer here is that body as the success arm's schema parsed it, so it is always an object: `typeof answer === \"object\"` is always true, and reading the property where it is no own key gives `undefined`, as the else branch does, for any key but an Object.prototype member's, which typespec-http-zod warns of (`optional-prototype-name`)."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof item !== \"object\"",
+			"replacement": "false",
+			"line": "if (typeof item !== \"object\" || item === null || !own(item, batch.key)) continue;",
+			"reason": "Drops `typeof item !== \"object\"`: a primitive then reaches `own(item, batch.key)`, false for every key but a string's indices and `length`, so it is passed over as before. Unreachable besides: the answer's items are models (surface.ts refuses `its items are no model`), validated by the arm's schema, so no primitive is among them in an emitted schema; the hand-built test sending a null, a string and an object with no key is what kills the other forms of this condition."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "value === undefined",
+			"replacement": "false",
+			"line": "return values.map((value) => (value === null || value === undefined ? null : one(value, wire)));",
+			"reason": "A list binding's item that is `undefined`: a parent value is a JSON body as its read schema parsed it, and a JSON array holds no `undefined`, so the `null` test alone decides every item."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof kind === \"string\"",
+			"replacement": "true",
+			"line": "const arm = typeof kind === \"string\" ? armOf.get(kind) : undefined;",
+			"reason": "Looks a kind that is no string up in the arms anyway: the arms are keyed by the string values `when` names (a Map, whose keys are compared by SameValueZero), so a number, a boolean, `null` or an object is never found, and the field is `null` with no call either way."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ArithmeticOperator",
+			"original": "a.index - b.index",
+			"replacement": "a.index + b.index",
+			"line": "placed.sort((a, b) => a.file - b.file || a.pos - b.pos || a.index - b.index);",
+			"reason": "The sort's last key, reached only by two types in one file at one position: the types ordered are distinct declarations of one namespace, its models or its namespaces, and no two declarations share a position (a namespace declared in several files is one type, met once)."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "type.node === undefined",
+			"replacement": "false",
+			"line": "const location = type.node === undefined ? undefined : getSourceLocation(type.node);",
+			"reason": "Calls getSourceLocation on every type, one without a node included: the types ordered here are a namespace's models and namespaces (its two callers, in the walk naming anonymous types), each declared in the spec and so with a node, so `type.node === undefined` is never true."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "location === undefined",
+			"replacement": "false",
+			"line": "const file = location === undefined ? undefined : files.get(location.file.path);",
+			"reason": "Reads the location's file where there is no location: a location is `undefined` only for a type with no node, and every model and namespace a namespace declares has one (see the mutant of the line above)."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "ref.kind === \"named\"",
+			"replacement": "true",
+			"line": "ref.kind === \"named\" ? ref.name : innermost(ref.of);",
+			"reason": "Treats every cached ref as named: the projector caches only named refs (a model's own type, in `#outputs` and `#inputCache`, and a union's), and returns an array's list ref before any cache is read or written, so `innermost` meets only a named ref here."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "OptionalChaining",
+			"original": "location?.pos",
+			"replacement": "location.pos",
+			"line": "return { type, index, file: file ?? Infinity, pos: location?.pos ?? Infinity };",
+			"reason": "Reads `location.pos` where there is no location: as above, every type ordered here has a node, so `location` is never undefined."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "exclusive !== undefined",
+			"replacement": "true",
+			"line": "if (exclusive !== undefined) bounds.push(exclusive - 1);",
+			"reason": "Pushes `undefined - 1`, `NaN`, where no @maxValueExclusive is stated: filtered out by `Number.isSafeInteger` before the least bound is taken, so the maximum is unchanged."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "inclusive !== undefined",
+			"replacement": "true",
+			"line": "if (inclusive !== undefined) bounds.push(inclusive);",
+			"reason": "Pushes `undefined` where no @maxValue is stated: filtered out by `Number.isSafeInteger` before the least bound is taken, so the maximum is unchanged."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[]",
+			"replacement": "[\"Stryker was here\"]",
+			"line": "const bounds: number[] = [];",
+			"reason": "Starts the bounds with a string: the maximum is the least of the bounds that are safe integers (`bounds.filter((bound) => Number.isSafeInteger(bound))`, below), so the string is filtered out and the maximum is unchanged."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "pageSize.type.kind === \"Scalar\"",
+			"replacement": "true",
+			"line": "let scalar: Scalar | undefined = pageSize.type.kind === \"Scalar\" ? pageSize.type : undefined;",
+			"reason": "Walks a page size's type as a scalar whatever it is: a type that is no scalar has no `baseScalar`, so the walk reads that one type and stops, and `getMaxValue` and `getMaxValueExclusive` answer nothing for a type the compiler's decorators never marked (they apply to numeric scalars and properties), so no bound is added."
 		}
 	]
 }

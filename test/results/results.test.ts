@@ -8,9 +8,14 @@ import {
 	type TypeRef,
 } from "../../src/model.js";
 import { NameBook } from "../../src/names.js";
-import { mutationResultOf, queryResultOf, statusCodesTable } from "../../src/results.js";
+import {
+	batchResultOf,
+	mutationResultOf,
+	queryResultOf,
+	statusCodesTable,
+} from "../../src/results.js";
 import { TypeProjector } from "../../src/types.js";
-import { type CompiledService, operationOf, serviceOf } from "../support/service-of.js";
+import { type CompiledService, operationOf, serviceOf, typeOf } from "../support/service-of.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -52,6 +57,61 @@ function wrapperField(name: string, type: TypeRef, description: string): OutputF
 		directives: [],
 	};
 }
+
+describe("a batched link", () => {
+	/**
+	 * **The field is one item of the batch's answer, which the resolver takes from its success
+	 * body**, so the success arm projects the body as it is, a 404 is `null`, the chunk the resolver
+	 * retries one value at a time, and every other arm is what it is on a read. The field's type is the
+	 * item's, and no type is named for the envelope.
+	 */
+	it("is the batch's item type, its success the body, a 404 null and the rest as on a read", () => {
+		const { route, operation } = operationOf(service, "Widgets_batch");
+		const projector = fresh();
+		const { type, projection } = batchResultOf(
+			route,
+			operation,
+			projector,
+			"WidgetsAuthor",
+			typeOf(service, "Results.Widget"),
+		);
+		expect(type).toEqual(named("Widget", false));
+		expect(projection).toEqual({
+			"200": { as: "value" },
+			"400": { as: "error", code: "BAD_USER_INPUT" },
+			"404": { as: "null" },
+			"422": { as: "error", code: "BAD_USER_INPUT" },
+			"500": { as: "error", code: "INTERNAL_SERVER_ERROR" },
+			"4XX": { as: "byStatus", nullOn404: true },
+		});
+		expect(projector.defs().map((def) => def.name)).toEqual(["Widget"]);
+	});
+
+	/** An anonymous item is named after the field, as an anonymous body is: `<Field>Item`. */
+	it("names an anonymous item after the field", () => {
+		const { route, operation } = operationOf(service, "Widgets_batchAnonymous");
+		const projector = fresh();
+		const body = operation.responses[0]?.responses[0]?.body?.type;
+		if (body?.kind !== "Model" || body.indexer === undefined) throw new Error("no list body");
+		const { type } = batchResultOf(route, operation, projector, "WidgetsLabel", body.indexer.value);
+		expect(type).toEqual(named("WidgetsLabelItem", false));
+		expect(defOf(projector, "WidgetsLabelItem")).toMatchObject({ kind: "object" });
+	});
+
+	/** A name the item claims that another holds is a collision naming the field's batch item. */
+	it("claims an anonymous item's name as the field's batch item", () => {
+		const { route, operation } = operationOf(service, "Widgets_batchAnonymous");
+		const book = new NameBook();
+		book.claim("WidgetsLabelItem", "a model of the spec's");
+		const projector = new TypeProjector(service.program, book, service.emitted.typeSchemaNames);
+		const body = operation.responses[0]?.responses[0]?.body?.type;
+		if (body?.kind !== "Model" || body.indexer === undefined) throw new Error("no list body");
+		batchResultOf(route, operation, projector, "WidgetsLabel", body.indexer.value);
+		expect(book.collisions.map((collision) => collision.second)).toContain(
+			"WidgetsLabel batch item",
+		);
+	});
+});
 
 describe("queries and links", () => {
 	/**

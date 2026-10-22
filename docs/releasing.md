@@ -11,6 +11,7 @@ suite never performs: it installs the versions its lockfile names.
 | ------------ | ------------------- | ---------------------- | ------------- | --------- |
 | 0.1.0        | `^0.33.0`           | 0.30.0                 | 1.15 or later | 17        |
 | 0.2.0        | `^0.34.0`           | 0.31.0                 | 1.15 or later | 17        |
+| 0.3.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 
 A new library minor is a new row: `^0.34.0` does not reach 0.35.0. Move this package's range in the
 same round as `typespec-hono`'s, so a consumer installs one copy of the library for both surfaces.
@@ -41,6 +42,32 @@ under all four, `zod@4.6.5`, `graphql@17.0.2`. There, against a hand-written con
 | graphql 17's tracing channels through Yoga, then with `useEngine`                           | `parse`, `validate`; then `execute` and 17 `resolve`                                                            |
 | a consumer's vitest through Yoga, without the README's alias, then with it                  | the realm error; a pass                                                                                         |
 | this package's suite against the rehearsal packages                                         | 1,280 passed, removability included                                                                             |
+
+### `0.3.0`, rehearsed with `typespec-http-zod` 0.34.0 and `typespec-hono` 0.31.1
+
+This package was published to the rehearsal registry at 0.3.0, naming `"typespec-http-zod": "^0.34.0"`,
+and installed into an empty directory with `typespec-hono` 0.31.1: one `typespec-http-zod@0.34.0`
+under both, `zod@4.6.5`, `graphql@17.0.2`, `graphql-yoga@5.24.6`. There, a bookshop whose books link
+their author and their four editors, and authors their publisher, through batch reads, the authors'
+`ids` under `@maxItems(50)`, and whose reviews link a book or an author by `subject_type`:
+
+| step                                                                                                              | result                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `tsp compile . --warn-as-error`                                                                                   | exit 0                                                                                       |
+| fifty books, their authors and the authors' publishers, through Yoga as "Node" mounts it                          | `Books_list`, one `Authors_batchGet` of 50 ids, one `Publishers_batchGet`                    |
+| the same books' authors and editors: 250 distinct ids                                                             | five `Authors_batchGet` of 50                                                                |
+| three books, one author unknown, the batch read answering 404 for it                                              | one call of 3, then three of 1; authors `a1`, `null`, `a3`                                   |
+| four reviews, of a book, a book, an author and a series                                                           | `Books_read` twice, `Authors_read` once; `Book`, `Book`, `Author`, `null`                    |
+| Field Cost of `book { author }`, of `book { editors }`, and of both with the publisher                            | 3, 6 and 9                                                                                   |
+| `graphqlRequestsOf` on a program not yet emitted, then after `compile` through the API                            | `undefined`; four requests, every document valid against `schema.graphql`                    |
+| `variables` for `book` and for `createBook`                                                                       | `{ id: "b1" }`; `{ input: { id, title, authorId } }`                                         |
+| `tsc` over a hand-written consumer, `strict` + `exactOptionalPropertyTypes`, one handler object for both surfaces | exit 0                                                                                       |
+| the 49 fixtures under `test/` that use neither `when` nor `batch`, compiled by 0.2.1 and by 0.3.0                 | 143 files and every diagnostic the same; `graphql-runtime.gen.ts` the new runtime, as copied |
+| this package's suite                                                                                              | 1,368 passed                                                                                 |
+
+**And its controls.** The same page with the author link unbatched makes 50 `Authors_read` calls. The
+consumer with an author lacking `publisher_id` fails with two `TS2322`, and restored from a byte copy,
+`cmp` clean, passes again.
 
 ## Release sequence
 

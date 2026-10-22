@@ -69,6 +69,10 @@ const CLAIMS = {
 		"Root fields and links are nullable, so one failing field does not null its siblings.",
 	linkNull:
 		"A link whose bound property is `null` or absent is `null`, and its handler is not called.",
+	keyed:
+		"Each review reads only the operation its kind names, one call per review; a kind no arm names is `null`, and nothing is called.",
+	batched:
+		"A batched link calls its batch read once for the distinct values of every parent a document reaches at once, and each field answers the item whose `key` is its value, or `null`.",
 	nullability:
 		"A property is nullable when it is optional or `| null`; a list's items are non-null unless they are `| null` themselves, a connection's `node` included.",
 	query2xx: "| 2xx | the field's value |",
@@ -1864,6 +1868,10 @@ const ROWS: readonly Row[] = [
 						],
 					},
 					{
+						name: "reviews",
+						args: [],
+					},
+					{
 						name: "sortedItems",
 						args: [
 							{
@@ -1879,6 +1887,71 @@ const ROWS: readonly Row[] = [
 			},
 		},
 		calls: [],
+	},
+	// A link chosen by a kind, and a batched link.
+	{
+		name: "a link chosen by a kind calls only the read each review's kind names, and nothing for a kind with none",
+		claims: ["keyed"],
+		fixture: "extras",
+		document: `{ reviews { id subject { __typename ... on Item { id name } ... on Kit { id parts } } } }`,
+		handlers: {
+			Reviews_list: () => ({
+				status: 200,
+				body: [
+					{ id: "r1", subject_type: "item", subject_id: "i1", item_id: "i1" },
+					{ id: "r2", subject_type: "kit", subject_id: "k1", item_id: "i1" },
+					{ id: "r3", subject_type: "set", subject_id: "s1", item_id: "i1" },
+				],
+			}),
+			Subjects_item: () => ({ status: 200, body: item }),
+			Subjects_kit: () => ({ status: 200, body: { id: "k1", parts: 4 } }),
+		},
+		data: {
+			reviews: [
+				{ id: "r1", subject: { __typename: "Item", id: "i1", name: "Widget" } },
+				{ id: "r2", subject: { __typename: "Kit", id: "k1", parts: 4 } },
+				{ id: "r3", subject: null },
+			],
+		},
+		calls: [
+			{ operationId: "Reviews_list", input: {} },
+			{ operationId: "Subjects_item", input: { id: "i1" } },
+			{ operationId: "Subjects_kit", input: { id: "k1" } },
+		],
+	},
+	{
+		name: "a batched link reads every review's item in one call of the distinct ids, matched by key",
+		claims: ["batched"],
+		fixture: "extras",
+		document: `{ reviews { id item { id name } } }`,
+		handlers: {
+			Reviews_list: () => ({
+				status: 200,
+				body: [
+					{ id: "r1", subject_type: "item", subject_id: "i1", item_id: "i1" },
+					{ id: "r2", subject_type: "item", subject_id: "i2", item_id: "i2" },
+					{ id: "r3", subject_type: "set", subject_id: "s1", item_id: "i1" },
+					{ id: "r4", subject_type: "set", subject_id: "s1", item_id: "i9" },
+				],
+			}),
+			// Answered in another order than asked, and without the id it does not know.
+			ItemBatches_read: () => ({
+				status: 200,
+				body: { items: [{ id: "i2", name: "Gadget" }, item] },
+			}),
+		},
+		data: {
+			reviews: [
+				{ id: "r1", item: { id: "i1", name: "Widget" } },
+				{ id: "r2", item: { id: "i2", name: "Gadget" } },
+				{ id: "r3", item: { id: "i1", name: "Widget" } },
+				{ id: "r4", item: null },
+			],
+		},
+		calls: [
+			{ operationId: "Reviews_list", input: {} },
+			{ operationId: "ItemBatches_read", input: { ids: ["i1", "i2", "i9"] } },
+		],
 	},
 ];
 
@@ -1927,6 +2000,10 @@ const OPERATIONS: Readonly<Record<Row["fixture"], readonly string[]>> = {
 		"Items_asOf",
 		"Items_remove",
 		"Items_sorted",
+		"Reviews_list",
+		"Subjects_item",
+		"Subjects_kit",
+		"ItemBatches_read",
 	],
 };
 

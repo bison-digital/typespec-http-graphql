@@ -8,3 +8,9 @@ export * from "typespec-http-zod";
 export { $onEmit } from "./emitter.js";
 export { $lib, EmitterOptionsSchema, type EmitterOptions } from "./lib.js";
 export { $decorators } from "./tsp-index.js";
+export {
+	type GraphQLRequest,
+	type GraphQLServiceRequests,
+	graphqlRequestsOf,
+	type RequestValues,
+} from "./requests.js";

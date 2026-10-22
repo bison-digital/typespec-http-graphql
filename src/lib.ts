@@ -135,6 +135,49 @@ const diagnostics = {
 		},
 	},
 	/**
+	 * A link's `when` that cannot choose it: it names no property or more than one, a property that
+	 * holds no string, or a value the property never holds, which would leave the link `null` on every
+	 * parent, silently.
+	 */
+	"link-when-mismatch": {
+		severity: "warning",
+		messages: {
+			default: paramMessage`The link '${"link"}' cannot be chosen as its 'when' says: ${"reason"}, so the link is dropped. The operation is still served over HTTP.`,
+		},
+	},
+	/**
+	 * Links of one parent sharing a name, at least one with `when`, that cannot be one field: each
+	 * value of one property chooses at most one of them, and they share everything the field states
+	 * once. **Every party is dropped**, as for any other collision of names.
+	 */
+	"link-arms-conflict": {
+		severity: "warning",
+		messages: {
+			default: paramMessage`The links '${"link"}' cannot be one field: ${"reason"}, so every one of them is dropped. The operations are still served over HTTP.`,
+		},
+	},
+	/**
+	 * An arm of a link chosen by a kind whose operation answers what no GraphQL union can hold as a
+	 * member: a union's members are object types, and the union resolves each answer by its arm.
+	 */
+	"link-arm-not-object": {
+		severity: "warning",
+		messages: {
+			default: paramMessage`The link '${"link"}' calls '${"operationId"}', which answers ${"answers"}, not an object type a union can hold, so that arm is dropped. The operation is still served over HTTP.`,
+		},
+	},
+	/**
+	 * A link whose `batch` the operation cannot serve: a batch read takes the values as one list in
+	 * the query, answers one list of items, and each item carries the value it was asked for under
+	 * `key`, which is how an answer reaches the parent that asked.
+	 */
+	"link-batch-invalid": {
+		severity: "warning",
+		messages: {
+			default: paramMessage`The link '${"link"}' cannot call '${"operationId"}' as a batch: ${"reason"}, so the link is dropped. The operation is still served over HTTP.`,
+		},
+	},
+	/**
 	 * An `@inputHeader` naming what is no optional header of its operation, so it changes nothing: a
 	 * required header is input already, a one-literal header is supplied, and any other parameter is
 	 * input or bound as it is.
@@ -296,6 +339,10 @@ type Diagnostics = {
 	"link-list-not-bindable": { readonly default: CallableMessage<["link", "property", "reason"]> };
 	"link-list-unbounded": { readonly default: CallableMessage<["link", "property"]> };
 	"link-not-safe": { readonly default: CallableMessage<["link", "operationId", "verb"]> };
+	"link-when-mismatch": { readonly default: CallableMessage<["link", "reason"]> };
+	"link-arms-conflict": { readonly default: CallableMessage<["link", "reason"]> };
+	"link-arm-not-object": { readonly default: CallableMessage<["link", "operationId", "answers"]> };
+	"link-batch-invalid": { readonly default: CallableMessage<["link", "operationId", "reason"]> };
 	"input-header-ignored": {
 		readonly default: CallableMessage<["parameter", "operationId", "reason"]>;
 	};

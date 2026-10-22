@@ -1,0 +1,12 @@
+{
+	// The Worker `batch.test.ts` serves: `batch.fixture.ts`, compiled from freshly emitted output.
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "typespec-http-graphql-batch",
+	"main": "batch.fixture.ts",
+	"compatibility_date": "2026-08-01",
+	// No `nodejs_compat`, as for the socket suite's Worker: without it there is no `setImmediate`, so
+	// a batch waits for its wave by `setTimeout`, the path this Worker exists to run.
+	"compatibility_flags": [],
+	"dev": { "port": 0, "inspector_port": 0 },
+	"observability": { "enabled": false },
+}
