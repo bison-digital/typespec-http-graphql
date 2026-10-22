@@ -3,6 +3,16 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
+## [0.2.1] - 2026-10-22
+
+A patch: no schema, resolver, type or emitted code changes.
+
+### Changed
+
+- **Comments, documentation and test fixtures are rewritten in neutral terms.** The comments in
+  `graphql-runtime.gen.ts`, this package's runtime copied beside the generated code, are reworded,
+  so regenerated output differs in those comments and nowhere else.
+
 ## [0.2.0] - 2026-10-21
 
 Requires `typespec-http-zod` `^0.34.0`.
