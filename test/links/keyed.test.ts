@@ -59,6 +59,14 @@ beforeAll(async () => {
 			const author = AUTHORS[authorId];
 			return author === undefined ? notFound : { status: 200, body: author };
 		},
+		SortedBooks_read: (_caller: unknown, input: Readonly<Record<string, unknown>>) => {
+			calls.push(`SortedBooks_read ${inputText(input)}`);
+			return { status: 200, body: BOOKS[String(input["id"])] };
+		},
+		SortedAuthors_reordered: (_caller: unknown, input: Readonly<Record<string, unknown>>) => {
+			calls.push(`SortedAuthors_reordered ${inputText(input)}`);
+			return { status: 200, body: AUTHORS[String(input["authorId"])] };
+		},
 	};
 	schema = generated.createSchema(() => handlers, {
 		authorize: () => "allow",
@@ -74,6 +82,12 @@ beforeEach(() => {
 		{ id: "r3", subject_type: "author", subject_id: "a1", subject_ids: ["a1"] },
 	];
 });
+
+/** A handler's input, its keys sorted, so the order a GraphQL client wrote the arguments in is moot. */
+const inputText = (input: Readonly<Record<string, unknown>>): string =>
+	JSON.stringify(
+		Object.fromEntries(Object.entries(input).toSorted(([a], [b]) => (a < b ? -1 : 1))),
+	);
 
 const run = (source: string): Promise<ExecutionResult> =>
 	graphql({ schema, source, contextValue: {} });
@@ -217,11 +231,56 @@ describe("arms that cannot be members", () => {
 		expect(sdl).toContain("union ReviewAbout = Author");
 	});
 
-	it("drops every arm where their arguments differ", () => {
+	it("drops every arm where their arguments differ, by name, type or an enum's values", () => {
 		expect(messagesOf("link-arms-conflict")).toEqual([
 			"The links 'Review.found' cannot be one field: their arguments differ, so every one of them is dropped. The operations are still served over HTTP.",
 			"The links 'Review.found' cannot be one field: their arguments differ, so every one of them is dropped. The operations are still served over HTTP.",
+			"The links 'Review.ranked' cannot be one field: their arguments differ, so every one of them is dropped. The operations are still served over HTTP.",
+			"The links 'Review.ranked' cannot be one field: their arguments differ, so every one of them is dropped. The operations are still served over HTTP.",
 		]);
 		expect(sdl).not.toContain("found");
+		expect(sdl).not.toContain("ranked");
+		expect(sdl).not.toContain("RANDOM");
+	});
+});
+
+describe("arms whose reads are deprecated", () => {
+	it("deprecate the field where every arm's read is, for each reason, and not where one arm's is", async () => {
+		const result = await run(
+			'{ __type(name: "Review") { fields(includeDeprecated: true) { name isDeprecated deprecationReason } } }',
+		);
+		const type = result.data?.["__type"] as
+			| { readonly fields: readonly { readonly name: string }[] }
+			| undefined;
+		const fields = type?.fields.filter(
+			(field) => field.name === "former" || field.name === "partly",
+		);
+		expect(fields).toEqual([
+			{
+				name: "former",
+				isDeprecated: true,
+				deprecationReason: "read a book at /books; read an author at /authors",
+			},
+			{ name: "partly", isDeprecated: false, deprecationReason: null },
+		]);
+	});
+});
+
+describe("arms taking the same arguments in another order", () => {
+	it("are one field, each arm handed the arguments by name", async () => {
+		const result = await run('{ reviews { listed(order: DESC, lang: "en") { __typename } } }');
+		expect(result.errors).toBeUndefined();
+		expect(result.data).toEqual({
+			reviews: [
+				{ listed: { __typename: "Book" } },
+				{ listed: { __typename: "Book" } },
+				{ listed: { __typename: "Author" } },
+			],
+		});
+		expect(calls).toEqual([
+			'SortedBooks_read {"id":"b1","lang":"en","order":"desc"}',
+			'SortedBooks_read {"id":"b2","lang":"en","order":"desc"}',
+			'SortedAuthors_reordered {"authorId":"a1","lang":"en","order":"desc"}',
+		]);
 	});
 });

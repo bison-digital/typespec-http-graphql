@@ -374,12 +374,33 @@ function membersOfArm(
 	return "a scalar";
 }
 
-/** An argument as the field states it once: name, type and default. */
-function argumentSignatureOf(field: OutputFieldPlan): string {
-	const text = (ref: TypeRef): string =>
-		`${ref.kind === "list" ? `[${text(ref.of)}]` : ref.name}${ref.nonNull ? "!" : ""}`;
+/**
+ * **An arm's arguments as the field would state them once**: by name, whatever order the operation
+ * declares them in, each with its type and default. A type is spelled out to what a client may send:
+ * an enum's values and an input object's fields, read from `defs` as they stand when the arm is
+ * planned. Two arms' anonymous types are named alike, after the field, so a later arm's would
+ * otherwise replace an earlier one's under the same name and pass for it.
+ */
+function argumentSignatureOf(field: OutputFieldPlan, defs: ReadonlyMap<string, TypeDef>): string {
+	const seen = new Set<string>();
+	const text = (ref: TypeRef): string => {
+		const nullability = ref.nonNull ? "!" : "";
+		if (ref.kind === "list") return `[${text(ref.of)}]${nullability}`;
+		const def = defs.get(ref.name);
+		if (seen.has(ref.name) || (def?.kind !== "enum" && def?.kind !== "input")) {
+			return `${ref.name}${nullability}`;
+		}
+		seen.add(ref.name);
+		const members =
+			def.kind === "enum"
+				? def.values.map((value) => `${value.name}=${String(value.wire)}`)
+				: def.fields.map((input) => `${input.name}:${text(input.type)}`);
+		return `${ref.name}{${members.join(",")}}${nullability}`;
+	};
 	return JSON.stringify(
-		field.arguments.map((argument) => [argument.name, text(argument.type), argument.defaultValue]),
+		field.arguments
+			.map((argument) => [argument.name, text(argument.type), argument.defaultValue] as const)
+			.toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
 	);
 }
 
@@ -397,11 +418,17 @@ function planArms(
 	projector: TypeProjector,
 	warnings: SurfaceDiagnostic[],
 ): { readonly planned: readonly Planned[]; readonly dropped: number } {
-	const arms = links.map((link) => planLink(program, link, parent, projector));
+	const signatures = new Map<Planned, string>();
+	const arms = links.map((link) => {
+		const arm = planLink(program, link, parent, projector);
+		signatures.set(arm, argumentSignatureOf(arm.field, defsByName(projector)));
+		return arm;
+	});
 	const defs = defsByName(projector);
 	const members: (Planned & {
 		readonly members: readonly string[];
 		readonly member: string | undefined;
+		readonly signature: string | undefined;
 	})[] = [];
 	let dropped = 0;
 	for (const arm of arms) {
@@ -419,11 +446,11 @@ function planArms(
 			dropped += 1;
 			continue;
 		}
-		members.push({ ...arm, ...answered });
+		members.push({ ...arm, ...answered, signature: signatures.get(arm) });
 	}
 	const [first] = members;
 	if (first === undefined) return { planned: [], dropped };
-	if (new Set(members.map((arm) => argumentSignatureOf(arm.field))).size > 1) {
+	if (new Set(members.map((arm) => arm.signature)).size > 1) {
 		for (const arm of members) {
 			warnings.push({
 				code: "link-arms-conflict",
@@ -481,12 +508,16 @@ function keyedFieldOf(arms: readonly Planned[]): OutputFieldPlan {
 		];
 		return typeof size === "number" ? [size] : [];
 	});
+	// Deprecated only where every arm's read is: while one is not, some parent still has a read.
+	const reasons = arms.map((arm) => arm.field.deprecationReason);
 	return {
 		name: first.field.name,
 		wire: first.field.wire,
 		type: first.field.type,
 		description: first.declaration.description,
-		deprecationReason: undefined,
+		deprecationReason: reasons.every((reason) => reason !== undefined)
+			? [...new Set(reasons)].join("; ")
+			: undefined,
 		arguments: first.field.arguments,
 		call: undefined,
 		keyed: {

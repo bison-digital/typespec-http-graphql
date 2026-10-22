@@ -4,7 +4,7 @@
 		"detected:src/connections.ts": 214,
 		"detected:src/inputs.ts": 196,
 		"detected:src/results.ts": 330,
-		"detected:src/runtime.ts": 1576,
+		"detected:src/runtime.ts": 1577,
 		"detected:src/types.ts": 1305
 	},
 	"ceilings": {
@@ -21,7 +21,7 @@
 		"survived:src/connections.ts": 15,
 		"survived:src/inputs.ts": 2,
 		"survived:src/results.ts": 0,
-		"survived:src/runtime.ts": 13,
+		"survived:src/runtime.ts": 12,
 		"survived:src/types.ts": 18,
 		"timeout:src/connections.ts": 0,
 		"timeout:src/inputs.ts": 0,

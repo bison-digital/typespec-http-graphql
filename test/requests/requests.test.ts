@@ -105,8 +105,11 @@ describe("graphqlRequestsOf", () => {
 		expect(services[0]?.requests.map((request) => `${request.kind} ${request.field}`)).toEqual([
 			"query book",
 			"query books",
+			"query edition",
 			"query shelving",
+			"query titles",
 			"mutation createBook",
+			"mutation moveBook",
 			"mutation tagBook",
 		]);
 		expect(requestNamed("book").operation.operation.name).toBe("read");
@@ -115,7 +118,7 @@ describe("graphqlRequestsOf", () => {
 	it("writes documents the served schema accepts", () => {
 		const requests = services.flatMap((service) => service.requests);
 		// Non-vacuity: no request at all would break no rule below.
-		expect(requests).toHaveLength(5);
+		expect(requests).toHaveLength(8);
 		for (const request of requests) {
 			expect(validate(served, parse(request.document)), request.field).toEqual([]);
 		}
@@ -182,6 +185,57 @@ describe("graphqlRequestsOf", () => {
 		expect(requestNamed("createBook").successTypenames).toEqual(["Book"]);
 		expect(requestNamed("shelving").successTypenames?.toSorted()).toEqual(["Book", "Shelved"]);
 		expect(requestNamed("book").successTypenames).toBeUndefined();
+	});
+
+	it("selects a member with no leaf of its own by its __typename, not by an empty fragment", () => {
+		expect(requestNamed("moveBook").document).toContain(
+			["    ... on Moved {", "      __typename", "    }"].join("\n"),
+		);
+		expect(requestNamed("moveBook").successTypenames?.toSorted()).toEqual(["Book", "Moved"]);
+	});
+
+	it("selects a connection of leaves by its nodes alone", () => {
+		expect(requestNamed("titles").document).toBe(
+			[
+				"query Titles($first: Int, $after: String) {",
+				"  titles(first: $first, after: $after) {",
+				"    __typename",
+				"    nodes",
+				"    pageInfo {",
+				"      hasNextPage",
+				"      endCursor",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+	});
+
+	it("selects a discriminated union's payload under its envelope, each member a success", () => {
+		expect(requestNamed("edition").document).toBe(
+			[
+				"query Edition($id: String!) {",
+				"  edition(id: $id) {",
+				"    __typename",
+				"    ... on EditionPrint {",
+				"      kind",
+				"      value {",
+				"        __typename",
+				"        pages",
+				"      }",
+				"    }",
+				"    ... on EditionDigital {",
+				"      kind",
+				"      value {",
+				"        __typename",
+				"        bytes",
+				"      }",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+		expect(requestNamed("edition").successTypenames).toEqual(["EditionPrint", "EditionDigital"]);
 	});
 
 	it("makes a REST request's values the variables, under GraphQL's names", () => {

@@ -690,6 +690,12 @@ describe("a batched link", () => {
 					reason: "it answers a page",
 				},
 				{
+					link: "Shelf.translated",
+					operationId: "BatchAuthors_inLanguage",
+					reason:
+						"the list 'languages' fills 'lang', and only the batch's own list parameter may be filled from a list",
+				},
+				{
 					link: "Shelf.twoAnswers",
 					operationId: "BatchAuthors_answers",
 					reason: "it answers 2 success bodies",

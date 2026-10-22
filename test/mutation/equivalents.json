@@ -372,14 +372,6 @@
 		{
 			"file": "src/runtime.ts",
 			"mutator": "ConditionalExpression",
-			"original": "typeof item !== \"object\"",
-			"replacement": "false",
-			"line": "if (typeof item !== \"object\" || item === null || !own(item, batch.key)) continue;",
-			"reason": "Drops `typeof item !== \"object\"`: a primitive then reaches `own(item, batch.key)`, false for every key but a string's indices and `length`, so it is passed over as before. Unreachable besides: the answer's items are models (surface.ts refuses `its items are no model`), validated by the arm's schema, so no primitive is among them in an emitted schema; the hand-built test sending a null, a string and an object with no key is what kills the other forms of this condition."
-		},
-		{
-			"file": "src/runtime.ts",
-			"mutator": "ConditionalExpression",
 			"original": "value === undefined",
 			"replacement": "false",
 			"line": "return values.map((value) => (value === null || value === undefined ? null : one(value, wire)));",

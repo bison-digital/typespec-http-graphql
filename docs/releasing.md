@@ -12,6 +12,7 @@ suite never performs: it installs the versions its lockfile names.
 | 0.1.0        | `^0.33.0`           | 0.30.0                 | 1.15 or later | 17        |
 | 0.2.0        | `^0.34.0`           | 0.31.0                 | 1.15 or later | 17        |
 | 0.3.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
+| 0.3.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 
 A new library minor is a new row: `^0.34.0` does not reach 0.35.0. Move this package's range in the
 same round as `typespec-hono`'s, so a consumer installs one copy of the library for both surfaces.
@@ -68,6 +69,20 @@ their author and their four editors, and authors their publisher, through batch 
 **And its controls.** The same page with the author link unbatched makes 50 `Authors_read` calls. The
 consumer with an author lacking `publisher_id` fails with two `TS2322`, and restored from a byte copy,
 `cmp` clean, passes again.
+
+### `0.3.1`, rehearsed the same way
+
+Published to the rehearsal registry at 0.3.1, naming `"typespec-http-zod": "^0.34.0"`, and installed
+into an empty directory with `typespec-hono` 0.31.1: one `typespec-http-zod@0.34.0` under both. The
+0.3.0 bookshop gave every result in the table above again, the consumer's `tsc` exit 0. Then the specs
+0.3.1 fixes, each against the installed package:
+
+| step                                                                                    | result                                                              |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| a batched link whose list fills another parameter                                       | `link-batch-invalid`, the list and the parameter named              |
+| arms whose anonymous enums share a name but not their values                            | `link-arms-conflict` on both                                        |
+| every root field of five specs with result unions, envelopes and connections of scalars | each document valid; a discriminated union's every member a success |
+| two batched links to one batch read, one by `id`, one by `handle`, one value for both   | each its own author, in two calls                                   |
 
 ## Release sequence
 

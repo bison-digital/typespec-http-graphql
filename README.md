@@ -284,6 +284,12 @@ export default defineConfig({
 });
 ```
 
+**A batched link waits for a timer, so a test that fakes timers must let it run.** The batch is sent
+on a macrotask, `setImmediate` or `setTimeout`, and under `vi.useFakeTimers()` that macrotask never
+comes: the document never settles. Fake only the timers the test needs,
+`vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })` on Node, or let the fakes
+advance on their own, `vi.useFakeTimers({ shouldAdvanceTime: true })`.
+
 ## Tracing
 
 graphql 17 publishes `graphql:parse`, `graphql:validate`, `graphql:execute` and `graphql:resolve`
@@ -509,10 +515,12 @@ its collection's GraphQL requests this way.
   a second arm adds a member rather than changing the field's type under its clients.
 
 - **The arms of one field agree.** They are chosen by values of one property, no value chooses two,
-  all or none bind a list, they take the same arguments, and at most one gives a description, which
-  is the field's. Arms that do not are dropped, every one of them, `link-arms-conflict`; a `when` the
-  property cannot hold is `link-when-mismatch`, and an arm whose read answers no object type a union
-  can hold, a list or a connection say, is `link-arm-not-object`.
+  all or none bind a list, they take the same arguments, by name in any order and each of the same
+  type down to an enum's values, and at most one gives a description, which is the field's. Arms that
+  do not are dropped, every one of them, `link-arms-conflict`; a `when` the property cannot hold is
+  `link-when-mismatch`, and an arm whose read answers no object type a union can hold, a list or a
+  connection say, is `link-arm-not-object`. The field is deprecated where every arm's read is, for
+  each of their reasons.
 - **A batched link reads many parents' values in one call** to a batch read: an operation taking a
   list of ids in its query and answering the items for them, as AIP-231's `BatchGet` does.
 
@@ -532,7 +540,9 @@ its collection's GraphQL requests this way.
   sends each of them again alone, so one missing id never blanks the others. A failure of the call is
   every waiting field's error. `items` names the body's list where it holds more than one, and a link
   bound to a list sends its items. A batch read that is not a `GET` with a list in its query, answers
-  a page, or answers items with no `key` is `link-batch-invalid`.
+  a page, or answers items with no `key` is `link-batch-invalid`, as is a link filling any other
+  parameter from a list. Two links to one batch read are batched apart, each matching by its own
+  `key` in its own `items`.
 
 ### Errors
 
@@ -645,37 +655,37 @@ around it.
 Set `warn-as-error` to make them fail a build. Each is reported once, at what it is about, however
 many services meet it.
 
-| code                       | raised when                                                                                                                                             | the declaration                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `no-fields-declared`       | a service has no declaration in `graphql.tsp`; nothing is written for it                                                                                | none                                |
-| `invalid-graphql-name`     | a name is not a GraphQL name: `/^[_A-Za-z][_0-9A-Za-z]*$/`, not starting `__`                                                                           | dropped                             |
-| `graphql-name-collision`   | two root fields of one root type, or a link and a field of its type, share a name                                                                       | every party dropped                 |
-| `declared-twice`           | an operation is declared as a root field more than once                                                                                                 | all but the first dropped           |
-| `unknown-link-parameter`   | a key of `@link`'s `parameters` is not a parameter of the operation                                                                                     | dropped                             |
-| `unknown-link-property`    | a value of `parameters` is not a property of the model                                                                                                  | dropped                             |
-| `link-property-unreadable` | a value of `parameters` is a property the read body never carries (create-only, or a header)                                                            | dropped                             |
-| `link-type-mismatch`       | a bound property is neither a value its parameter accepts, by the parameter's type or a scalar that type extends, nor a list of them, nullability aside | dropped                             |
-| `link-list-not-bindable`   | a link binds a second list, or binds a list to an `@list` operation                                                                                     | dropped                             |
-| `link-list-unbounded`      | a link binds a list that declares no `@maxItems`, so no cost limit could bound the calls it makes                                                       | dropped                             |
-| `link-not-safe`            | a link targets an operation whose method is not `GET`                                                                                                   | dropped                             |
-| `link-when-mismatch`       | a link's `when` names no property or several, a property that holds no string, or a value the property never holds                                      | dropped                             |
-| `link-arms-conflict`       | links of one model sharing a name, at least one with `when`, cannot be one field: see [Links](#links)                                                   | every party dropped                 |
-| `link-arm-not-object`      | an arm of a link chosen by a kind calls an operation answering no object type a union can hold                                                          | that arm dropped                    |
-| `link-batch-invalid`       | a link's `batch` names an operation that is no batch read of its values: no list in its query, a page, or items with no `key`                           | dropped                             |
-| `query-not-safe`           | a `@queryField` targets a method that is not safe                                                                                                       | kept: a `POST` search stays a query |
-| `head-operation`           | the operation is `HEAD`, which answers no body to select from                                                                                           | dropped                             |
-| `non-json-request`         | the request body is not JSON                                                                                                                            | dropped                             |
-| `non-object-body`          | the request body has no properties to merge into the handler's input                                                                                    | dropped                             |
-| `shared-input-key`         | two inputs the handler's input carries under one key (a header and a query `x`), as typespec-http-zod reports them                                      | dropped                             |
-| `non-json-response`        | a response is not JSON                                                                                                                                  | dropped                             |
-| `link-target-unreachable`  | `@link` targets a model no field returns                                                                                                                | dropped                             |
-| `not-a-connection`         | an `@list` operation lacks one of the five paging decorators                                                                                            | kept, as its declared response      |
-| `transport-argument`       | a required cookie, or `Authorization`, `Proxy-Authorization` or `Cookie` header, stays an argument, which a document carries in text servers log        | kept                                |
-| `projected-as-json`        | a type GraphQL cannot express is projected as `JSON`; Zod still validates it. Not raised for a type `@json` accepts                                     | kept                                |
-| `not-projected-as-json`    | a `@json` names a type this service projects as a GraphQL type of its own                                                                               | none                                |
-| `input-header-ignored`     | an `@inputHeader` names no optional header of its operation: no parameter, another kind, a required header or one of a single literal                   | none                                |
-| `anonymous-type-shared`    | members of two or more models hold one anonymous type, through an `alias` or an instance such as `Crate<"x">`; it is named after the first declared     | kept                                |
-| `shared-output-dir`        | another emitter writes the same directory with different library options                                                                                | none                                |
+| code                       | raised when                                                                                                                                                     | the declaration                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `no-fields-declared`       | a service has no declaration in `graphql.tsp`; nothing is written for it                                                                                        | none                                |
+| `invalid-graphql-name`     | a name is not a GraphQL name: `/^[_A-Za-z][_0-9A-Za-z]*$/`, not starting `__`                                                                                   | dropped                             |
+| `graphql-name-collision`   | two root fields of one root type, or a link and a field of its type, share a name                                                                               | every party dropped                 |
+| `declared-twice`           | an operation is declared as a root field more than once                                                                                                         | all but the first dropped           |
+| `unknown-link-parameter`   | a key of `@link`'s `parameters` is not a parameter of the operation                                                                                             | dropped                             |
+| `unknown-link-property`    | a value of `parameters` is not a property of the model                                                                                                          | dropped                             |
+| `link-property-unreadable` | a value of `parameters` is a property the read body never carries (create-only, or a header)                                                                    | dropped                             |
+| `link-type-mismatch`       | a bound property is neither a value its parameter accepts, by the parameter's type or a scalar that type extends, nor a list of them, nullability aside         | dropped                             |
+| `link-list-not-bindable`   | a link binds a second list, or binds a list to an `@list` operation                                                                                             | dropped                             |
+| `link-list-unbounded`      | a link binds a list that declares no `@maxItems`, so no cost limit could bound the calls it makes                                                               | dropped                             |
+| `link-not-safe`            | a link targets an operation whose method is not `GET`                                                                                                           | dropped                             |
+| `link-when-mismatch`       | a link's `when` names no property or several, a property that holds no string, or a value the property never holds                                              | dropped                             |
+| `link-arms-conflict`       | links of one model sharing a name, at least one with `when`, cannot be one field: see [Links](#links)                                                           | every party dropped                 |
+| `link-arm-not-object`      | an arm of a link chosen by a kind calls an operation answering no object type a union can hold                                                                  | that arm dropped                    |
+| `link-batch-invalid`       | a link's `batch` names an operation that is no batch read of its values: no list in its query, a page, items with no `key`, or a list filling another parameter | dropped                             |
+| `query-not-safe`           | a `@queryField` targets a method that is not safe                                                                                                               | kept: a `POST` search stays a query |
+| `head-operation`           | the operation is `HEAD`, which answers no body to select from                                                                                                   | dropped                             |
+| `non-json-request`         | the request body is not JSON                                                                                                                                    | dropped                             |
+| `non-object-body`          | the request body has no properties to merge into the handler's input                                                                                            | dropped                             |
+| `shared-input-key`         | two inputs the handler's input carries under one key (a header and a query `x`), as typespec-http-zod reports them                                              | dropped                             |
+| `non-json-response`        | a response is not JSON                                                                                                                                          | dropped                             |
+| `link-target-unreachable`  | `@link` targets a model no field returns                                                                                                                        | dropped                             |
+| `not-a-connection`         | an `@list` operation lacks one of the five paging decorators                                                                                                    | kept, as its declared response      |
+| `transport-argument`       | a required cookie, or `Authorization`, `Proxy-Authorization` or `Cookie` header, stays an argument, which a document carries in text servers log                | kept                                |
+| `projected-as-json`        | a type GraphQL cannot express is projected as `JSON`; Zod still validates it. Not raised for a type `@json` accepts                                             | kept                                |
+| `not-projected-as-json`    | a `@json` names a type this service projects as a GraphQL type of its own                                                                                       | none                                |
+| `input-header-ignored`     | an `@inputHeader` names no optional header of its operation: no parameter, another kind, a required header or one of a single literal                           | none                                |
+| `anonymous-type-shared`    | members of two or more models hold one anonymous type, through an `alias` or an instance such as `Crate<"x">`; it is named after the first declared             | kept                                |
+| `shared-output-dir`        | another emitter writes the same directory with different library options                                                                                        | none                                |
 
 ## Removing it
 

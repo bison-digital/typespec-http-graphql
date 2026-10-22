@@ -101,6 +101,21 @@ function handlersFor(): object {
 			]),
 		),
 		// An answer holding what is no item: a null, a string, and an object with no key.
+		// One author's id is another's handle: a link matching by one key must not answer the other.
+		Authors_refs: (_ctx: unknown, { ids }: { readonly ids: readonly string[] }) => {
+			calls.push({ operationId: "Authors_refs", ids });
+			const people = [
+				{ id: "a-1", handle: "h-9", name: "the author a-1" },
+				{ id: "x-1", handle: "a-1", name: "the editor whose handle is a-1" },
+			].filter((person) => ids.includes(person.id) || ids.includes(person.handle));
+			return {
+				status: 200,
+				body: {
+					authors: people,
+					editors: people.map((person) => ({ ...person, name: `${person.name}, as an editor` })),
+				},
+			};
+		},
 		Authors_messy: (_ctx: unknown, { ids }: { readonly ids: readonly string[] }) => {
 			calls.push({ operationId: "Authors_messy", ids });
 			return {
@@ -135,6 +150,34 @@ const batchOf = (
 			arms: [{ status: 200, schema: z.array(item) }],
 			bound,
 			batch: { wire: "ids", key: "id", size },
+			projection: { "200": { as: "value" } },
+		}),
+		handlersFor,
+		deps,
+		{},
+	);
+
+/** A batched link to `Authors_refs`, matching by `key` in the list `items` names. */
+const refsBatch = (parent: string, key: string, items: string) =>
+	resolverFor(
+		call({
+			operationId: "Authors_refs",
+			input: z.looseObject({ ids: z.array(z.string()) }),
+			arms: [
+				{
+					status: 200,
+					schema: z.object(
+						Object.fromEntries(
+							["authors", "editors"].map((list) => [
+								list,
+								z.array(z.object({ id: z.string(), handle: z.string(), name: z.string() })),
+							]),
+						),
+					),
+				},
+			],
+			bound: [{ wire: "ids", parent }],
+			batch: { wire: "ids", key, items },
 			projection: { "200": { as: "value" } },
 		}),
 		handlersFor,
@@ -244,6 +287,9 @@ const Book = new GraphQLObjectType({
 				undefined,
 			),
 		},
+		byId: { type: Author, resolve: refsBatch("author_id", "id", "authors") },
+		byHandle: { type: Author, resolve: refsBatch("editor_handle", "handle", "authors") },
+		asEditor: { type: Author, resolve: refsBatch("author_id", "id", "editors") },
 		messyAuthor: {
 			type: Author,
 			resolve: batchOf(
@@ -536,6 +582,24 @@ describe("a batch's calls", () => {
 		const result = await run("{ books { allAtOnce { id } } }");
 		expect(result.errors).toBeUndefined();
 		expect(calls).toEqual([{ operationId: "Authors_zero", ids: ["a-1", "a-2"] }]);
+	});
+
+	it("are one per link's key and items, two links to one batch read sending one value each answered its own", async () => {
+		books = [{ id: "b-1", author_id: "a-1", editor_handle: "a-1" }];
+		const result = await run("{ books { byId { name } byHandle { name } asEditor { name } } }");
+		expect(result.errors).toBeUndefined();
+		expect(result.data?.["books"]).toEqual([
+			{
+				byId: { name: "the author a-1" },
+				byHandle: { name: "the editor whose handle is a-1" },
+				asEditor: { name: "the author a-1, as an editor" },
+			},
+		]);
+		expect(calls).toEqual([
+			{ operationId: "Authors_refs", ids: ["a-1"] },
+			{ operationId: "Authors_refs", ids: ["a-1"] },
+			{ operationId: "Authors_refs", ids: ["a-1"] },
+		]);
 	});
 
 	it("are one per operation in a wave, two batch reads reached at once each sent apart", async () => {

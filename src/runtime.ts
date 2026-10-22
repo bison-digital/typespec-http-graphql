@@ -2051,7 +2051,8 @@ export function resolverFor<X extends object, C>(
 			calls = new Map();
 			MEMO.set(context, calls);
 		}
-		const queueKey = `${call.operationId}\u0000batch\u0000${canonical(input)}`;
+		// Two links to one batch read may match its items by different keys, or in different lists.
+		const queueKey = `${call.operationId}\u0000batch\u0000${canonical(batch)}\u0000${canonical(input)}`;
 		const valueKey = `${queueKey}\u0000${canonical(value)}`;
 		let pending = calls.get(valueKey);
 		if (pending === undefined) {

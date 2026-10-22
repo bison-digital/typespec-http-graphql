@@ -158,35 +158,55 @@ function selectable(defs: ReadonlyMap<string, TypeDef>, field: OutputFieldPlan):
 
 /**
  * The lines selecting a named type: `__typename`, then its leaf fields; a union's members each by a
- * fragment of theirs; a wrapper's `value` below it.
+ * fragment of theirs, one with no leaf of its own by its `__typename`; a wrapper's `value`, and a
+ * discriminated union's payload under its envelope, below it.
  */
 function selectionOf(defs: ReadonlyMap<string, TypeDef>, name: string, indent: string): string[] {
 	const def = defs.get(name);
 	const lines = [`${indent}__typename`];
 	if (def?.kind === "union") {
+		const discriminator =
+			def.resolveBy.kind === "discriminator" ? def.resolveBy.property : undefined;
 		for (const member of def.members) {
+			const leaves = leavesOf(defs, member, `${indent}  `, discriminator);
 			lines.push(
 				`${indent}... on ${member} {`,
-				...leavesOf(defs, member, `${indent}  `),
+				...(leaves.length === 0 ? [`${indent}  __typename`] : leaves),
 				`${indent}}`,
 			);
 		}
 		return lines;
 	}
-	return [...lines, ...leavesOf(defs, name, indent)];
+	return [...lines, ...leavesOf(defs, name, indent, undefined)];
 }
 
-/** The leaf fields of an object or interface; a wrapper's `value`, selected to its own leaves. */
-function leavesOf(defs: ReadonlyMap<string, TypeDef>, name: string, indent: string): string[] {
+/**
+ * The leaf fields of an object or interface, and the one field below them a request also selects:
+ * a wrapper's `value`, or, in a member of a union `discriminator` resolves, the envelope beside the
+ * discriminator, each selected to its own leaves.
+ */
+function leavesOf(
+	defs: ReadonlyMap<string, TypeDef>,
+	name: string,
+	indent: string,
+	discriminator: string | undefined,
+): string[] {
 	const def = defs.get(name);
 	if (def?.kind !== "object" && def?.kind !== "interface") return [];
+	const [first, second] = def.fields;
+	const payload =
+		def.fields.length === 1 && first?.name === "value"
+			? first
+			: def.fields.length === 2 && discriminator !== undefined && first?.wire === discriminator
+				? second
+				: undefined;
 	const lines: string[] = [];
 	for (const field of def.fields) {
 		if (selectable(defs, field)) {
 			lines.push(`${indent}${field.name}`);
-		} else if (field.name === "value" && def.fields.length === 1 && !isLeaf(defs, field.type)) {
+		} else if (field === payload && !isLeaf(defs, field.type)) {
 			lines.push(
-				`${indent}value {`,
+				`${indent}${field.name} {`,
 				...selectionOf(defs, innermost(field.type), `${indent}  `),
 				`${indent}}`,
 			);
@@ -228,7 +248,9 @@ function connectionSelection(defs: ReadonlyMap<string, TypeDef>, connection: str
 		"    __typename",
 		...(nodes === undefined
 			? []
-			: ["    nodes {", ...selectionOf(defs, innermost(nodes.type), "      "), "    }"]),
+			: isLeaf(defs, nodes.type)
+				? ["    nodes"]
+				: ["    nodes {", ...selectionOf(defs, innermost(nodes.type), "      "), "    }"]),
 		"    pageInfo {",
 		"      hasNextPage",
 		"      endCursor",
@@ -236,17 +258,21 @@ function connectionSelection(defs: ReadonlyMap<string, TypeDef>, connection: str
 	];
 }
 
-/** A union field's success members: those a 2xx arm projects onto. */
+/**
+ * A union field's success members: those a 2xx arm projects onto, and every member of a union a
+ * 2xx arm answers whole, as a discriminated union is.
+ */
 function successTypenamesOf(
 	defs: ReadonlyMap<string, TypeDef>,
 	field: OutputFieldPlan,
 ): readonly string[] | undefined {
-	if (defs.get(innermost(field.type))?.kind !== "union" || field.call === undefined)
-		return undefined;
+	const def = defs.get(innermost(field.type));
+	if (def?.kind !== "union" || field.call === undefined) return undefined;
 	const names = new Set<string>();
 	for (const [key, projection] of Object.entries(field.call.projection)) {
 		if (!key.startsWith("2")) continue;
 		if (projection.as === "member" || projection.as === "wrap") names.add(projection.type);
+		if (projection.as === "value") for (const member of def.members) names.add(member);
 	}
 	return [...names];
 }

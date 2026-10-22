@@ -3,7 +3,30 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
-## [0.3.0] - 2026-10-22
+## [0.3.1] - 2026-10-22
+
+Fixes to 0.3.0's batched links, links chosen by a kind and `graphqlRequestsOf`. For a spec that uses
+neither kind of link, every file is what 0.3.0 writes but `graphql-runtime.gen.ts`, the runtime copy.
+
+### Fixed
+
+- **Two batched links to one batch read are batched apart.** They shared one batch and one memo
+  entry, so a link matching items by another `key`, or in another `items` list, could answer the other
+  link's item for the same value.
+- **A batched link filling any other parameter from a list is `link-batch-invalid`.** Its list's
+  values were sent as the batch's ids, and the parameter left unset, so every call was refused.
+- **The arms of a link chosen by a kind are compared by argument name**, so arms declaring the same
+  arguments in another order are one field rather than dropped, **and by each argument's type down
+  to an enum's values**: two arms whose anonymous enums share a name but not their values were one
+  field accepting values one arm refuses, and are now `link-arms-conflict`.
+- **A link chosen by a kind is deprecated where every arm's read is**, with their reasons. It never
+  was.
+- **`graphqlRequestsOf` writes documents the schema accepts for every root field.**
+  - A union member with no leaf field of its own is selected by its `__typename`, not by an empty
+    fragment that did not parse.
+  - A connection of scalars or enums selects `nodes` alone.
+  - A discriminated union's payload is selected under its envelope, and all its members are the
+    field's success typenames, which were empty.
 
 Requires `typespec-http-zod` `^0.34.0`, as 0.2 does. For a spec that uses neither new option, every
 file is what 0.2.1 writes but `graphql-runtime.gen.ts`, the copy of this package's runtime, which

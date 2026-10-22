@@ -11,6 +11,7 @@ namespace Surface {
     authorId: string | null;
     @maxItems(10) authorIds: string[];
     count: int32;
+    @maxItems(3) languages: string[];
   }
 
   model Penned {
@@ -44,6 +45,7 @@ namespace Surface {
       editors: Author[];
     };
     @route("/strings") @get strings(@query(#{ explode: true }) ids: string[]): string[];
+    @route("/in-language") @get inLanguage(@query(#{ explode: true }) ids: string[], @query lang: string): Author[];
     @route("/penned") @get penned(@query(#{ explode: true }) ids: string[]): Penned[];
     @route("/answers") @get answers(@query(#{ explode: true }) ids: string[]): {
       @statusCode _: 200;
@@ -75,6 +77,7 @@ namespace Surface {
 @@link(Shelf, "optionalKey", BatchAuthors.penned, #{ ids: "authorId" }, #{ batch: #{ key: "nickname" } });
 @@link(Shelf, "wrongKey", BatchAuthors.penned, #{ ids: "authorId" }, #{ batch: #{ key: "count" } });
 @@link(Shelf, "twoAnswers", BatchAuthors.answers, #{ ids: "authorId" }, #{ batch: #{ key: "id" } });
+@@link(Shelf, "translated", BatchAuthors.inLanguage, #{ lang: "languages", ids: "authorId" }, #{ batch: #{ key: "id" } });
 
 // A value the batch parameter's items do not accept is a type mismatch, batch or not.
 @@link(Shelf, "byCount", BatchAuthors.bare, #{ ids: "count" }, #{ batch: #{ key: "id" } });

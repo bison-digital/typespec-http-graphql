@@ -711,6 +711,23 @@ function checkLink(program: Program, declaration: LinkDeclaration, owned: Owned)
 				},
 			};
 		}
+		/**
+		 * **A batch is filled from a list only at its own list parameter.** A list filling any other
+		 * parameter would make each of its values a batch of its own, which neither the batch's
+		 * queue nor the field's weight counts.
+		 */
+		if (list !== undefined && declaration.batch !== undefined && batchList === undefined) {
+			return {
+				failure: {
+					code: "link-batch-invalid",
+					format: {
+						link,
+						operationId,
+						reason: `the list '${propertyName}' fills '${parameterName}', and only the batch's own list parameter may be filled from a list`,
+					},
+				},
+			};
+		}
 		if (list !== undefined) {
 			const failure = listFailureOf(program, declaration, bindings, list.array, property, owned);
 			if (failure !== undefined) return { failure };

@@ -49,6 +49,32 @@ model Shelved {
   shelf: string;
 }
 
+/** An answer with no leaf of its own: its one field is an object. */
+model Moved {
+  @statusCode _: 202;
+  price: Price;
+}
+
+model TitlePage {
+  @pageItems items: string[];
+  @continuationToken next?: string;
+}
+
+model Printed {
+  pages: int32;
+}
+
+model Digital {
+  bytes: int64;
+}
+
+/** On the wire as `{ kind, value }`, the payload under `value`. */
+@discriminated
+union Edition {
+  print: Printed,
+  digital: Digital,
+}
+
 @route("/books")
 interface Books {
   @get read(@path id: string, @query format?: Format): Book | NotFound;
@@ -65,6 +91,9 @@ interface Books {
     @body book: Book;
   } | Conflict;
   @route("/shelve") @get shelve(@path id: string): Book | Shelved;
+  @route("/move") @post move(@path id: string): Book | Moved;
+  @route("/titles") @list @get titles(@query @pageSize limit?: int32 = 10, @query @continuationToken cursor?: string): TitlePage;
+  @route("/edition") @get edition(@path id: string): Edition;
   /** A body that is a list, which the handler's input carries under its own key. */
   @route("/tags") @post tag(@path id: string, @body labels: string[]): Book | NotFound;
 }
@@ -74,4 +103,7 @@ interface Books {
 @@queryField(Books.shelve, "shelving");
 @@mutationField(Books.create, "createBook");
 @@mutationField(Books.tag, "tagBook");
+@@mutationField(Books.move, "moveBook");
+@@queryField(Books.titles, "titles");
+@@queryField(Books.edition, "edition");
 @@inputHeader(Books.create, "idempotencyKey");
