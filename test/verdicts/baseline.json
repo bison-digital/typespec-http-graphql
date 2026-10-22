@@ -1,0 +1,39 @@
+{
+	"note": "Verdict parity between GraphQL and the library's Zod: root fields, arms and legal bodies compared for responses; root fields and probes for inputs; inputs whose doc, deprecation and default were checked (floors); and every skip by reason (ceilings). How each probe was answered is in .out-verdicts/report.json. Held by test/support/ratchet.ts.",
+	"floors": {
+		"facts:defaults": 7,
+		"facts:deprecations": 1,
+		"facts:docs": 117,
+		"facts:inputs": 477,
+		"fixtures:loaded": 57,
+		"inputs:fields": 673,
+		"inputs:probes": 2718,
+		"responses:arms": 683,
+		"responses:bodies": 1092,
+		"responses:fields": 673
+	},
+	"ceilings": {
+		"facts:open-input": 3,
+		"fixture:compile-error": 2,
+		"fixture:nothing-emitted": 10,
+		"input:no-legal-input": 6,
+		"input:untranslatable-probe": 49,
+		"response:error-arm": 88,
+		"response:no-legal-body": 2,
+		"response:no-legal-input": 6
+	},
+	"loosened": [
+		{
+			"reason": "A model carrying additional properties is projected as JSON, warned projected-as-json, so the corpus's additional-properties scenarios gain those warnings and their spread inputs become one JSON input with no per-field doc, deprecation or default to check.",
+			"change": "floors facts:docs: regressed, baseline 121, measured 114"
+		},
+		{
+			"reason": "A model carrying additional properties is projected as JSON, warned projected-as-json, so the corpus's additional-properties scenarios gain those warnings and their spread inputs become one JSON input with no per-field doc, deprecation or default to check.",
+			"change": "floors facts:inputs: regressed, baseline 481, measured 474"
+		},
+		{
+			"reason": "A model carrying additional properties is projected as JSON, warned projected-as-json, so the corpus's additional-properties scenarios gain those warnings and their spread inputs become one JSON input with no per-field doc, deprecation or default to check.",
+			"change": "ceilings facts:open-input: new, measured 3"
+		}
+	]
+}

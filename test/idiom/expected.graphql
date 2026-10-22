@@ -1,0 +1,274 @@
+# The schema a person would write by hand for the domain in rest.tsp, following design.md: types in
+# PascalCase, fields in camelCase, enum values in CONSTANT_CASE, every root field and link nullable,
+# Relay connections with `edges`, `nodes` and `pageInfo`, a union of outcomes per mutation, the IBM
+# cost directives, and the page size's default (50, as `PageRequest.limit` declares) on `first`, so
+# a client sees it in the schema. Descriptions are left out: the comparison removes them from both
+# sides.
+
+directive @cost(
+	weight: String!
+) on ARGUMENT_DEFINITION | ENUM | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | OBJECT | SCALAR
+
+directive @listSize(
+	assumedSize: Int
+	slicingArguments: [String!]
+	sizedFields: [String!]
+	requireOneSlicingArgument: Boolean = true
+) on FIELD_DEFINITION
+
+type Query {
+	publisher(publisherId: String!): Publisher @cost(weight: "1")
+	author(authorId: String!): Author @cost(weight: "1")
+	authors(first: Int = 50, after: String): AuthorConnection
+		@cost(weight: "1")
+		@listSize(
+			slicingArguments: ["first"]
+			sizedFields: ["edges", "nodes"]
+			requireOneSlicingArgument: false
+		)
+	editor(editorId: String!): Editor @cost(weight: "1")
+	book(bookId: String!): Book @cost(weight: "1")
+	books(first: Int = 50, after: String): BookConnection
+		@cost(weight: "1")
+		@listSize(
+			slicingArguments: ["first"]
+			sizedFields: ["edges", "nodes"]
+			requireOneSlicingArgument: false
+		)
+	edition(editionId: String!): Edition @cost(weight: "1")
+}
+
+type Mutation {
+	createBook(input: CreateBookInput!): CreateBookResult @cost(weight: "1")
+	updateBook(input: UpdateBookInput!): UpdateBookResult @cost(weight: "1")
+	deleteBook(input: DeleteBookInput!): DeleteBookResult @cost(weight: "1")
+}
+
+scalar UTCDateTime @specifiedBy(url: "https://scalars.graphql.org/chillicream/date-time.html")
+
+scalar JSON
+
+type PageInfo {
+	hasNextPage: Boolean!
+	hasPreviousPage: Boolean!
+	startCursor: String
+	endCursor: String
+}
+
+enum PublisherStatus {
+	ACTIVE
+	SUSPENDED
+	ARCHIVED
+}
+
+type Publisher {
+	id: String!
+	parentPublisherId: String
+	name: String!
+	status: PublisherStatus!
+	createdAt: UTCDateTime!
+}
+
+type Author {
+	id: String!
+	publisherId: String!
+	name: String!
+	createdAt: UTCDateTime!
+	editors(first: Int = 50, after: String): EditorConnection
+		@cost(weight: "1")
+		@listSize(
+			slicingArguments: ["first"]
+			sizedFields: ["edges", "nodes"]
+			requireOneSlicingArgument: false
+		)
+}
+
+type AuthorConnection {
+	edges: [AuthorEdge!]!
+	nodes: [Author!]!
+	pageInfo: PageInfo!
+}
+
+type AuthorEdge {
+	node: Author!
+	cursor: String!
+}
+
+enum EditorRole {
+	DIRECTOR
+	SENIOR_EDITOR
+	COPY_EDITOR
+}
+
+enum ContractStatus {
+	ACTIVE
+	OFFERED
+	SUSPENDED
+	ENDED
+}
+
+type Editor {
+	id: String!
+	publisherId: String!
+	displayName: String!
+	email: String
+	role: EditorRole!
+	status: ContractStatus!
+	authorIds: [String!]!
+	createdAt: UTCDateTime!
+}
+
+type EditorConnection {
+	edges: [EditorEdge!]!
+	nodes: [Editor!]!
+	pageInfo: PageInfo!
+}
+
+type EditorEdge {
+	node: Editor!
+	cursor: String!
+}
+
+enum BookStatus {
+	DRAFT
+	PUBLISHED
+	IN_REVIEW
+	REJECTED
+	WITHDRAWN
+}
+
+type Book {
+	id: String!
+	publisherId: String!
+	editorId: String
+	commissionedById: String
+	authorId: String
+	title: String
+	status: BookStatus!
+	metadata: JSON!
+	createdAt: UTCDateTime!
+	updatedAt: UTCDateTime!
+	author: Author @cost(weight: "1")
+	editor: Editor @cost(weight: "1")
+	commissionedBy: Editor @cost(weight: "1")
+	editions(
+		first: Int = 50
+		after: String
+		editionType: [EditionType!]
+		editionName: String
+		allVersions: Boolean
+	): EditionConnection
+		@cost(weight: "1")
+		@listSize(
+			slicingArguments: ["first"]
+			sizedFields: ["edges", "nodes"]
+			requireOneSlicingArgument: false
+		)
+}
+
+type BookConnection {
+	edges: [BookEdge!]!
+	nodes: [Book!]!
+	pageInfo: PageInfo!
+}
+
+type BookEdge {
+	node: Book!
+	cursor: String!
+}
+
+enum EditionType {
+	PRINT_HARDBACK
+	EBOOK_EPUB
+	PRINT_PAPERBACK
+}
+
+type Edition {
+	id: String!
+	bookId: String!
+	editionName: String!
+	editionType: EditionType!
+	versionNumber: Int!
+	checksum: String
+	metadata: JSON!
+	createdAt: UTCDateTime!
+}
+
+type EditionConnection {
+	edges: [EditionEdge!]!
+	nodes: [Edition!]!
+	pageInfo: PageInfo!
+}
+
+type EditionEdge {
+	node: Edition!
+	cursor: String!
+}
+
+interface ProblemFieldsInterface {
+	type: String!
+	title: String!
+	status: Int!
+	detail: String
+	requestId: String
+}
+
+type ProblemError {
+	pointer: String
+	detail: String!
+}
+
+type ValidationProblem implements ProblemFieldsInterface {
+	type: String!
+	title: String!
+	status: Int!
+	detail: String
+	requestId: String
+	errors: [ProblemError!]
+}
+
+type NotFoundProblem implements ProblemFieldsInterface {
+	type: String!
+	title: String!
+	status: Int!
+	detail: String
+	requestId: String
+}
+
+type ConflictProblem implements ProblemFieldsInterface {
+	type: String!
+	title: String!
+	status: Int!
+	detail: String
+	requestId: String
+}
+
+input CreateBookInput {
+	originalLanguage: String!
+	title: String
+	editorId: String
+	authorId: String
+	metadata: JSON
+}
+
+union CreateBookResult = Book | ValidationProblem | ConflictProblem
+
+input UpdateBookInput {
+	bookId: String!
+	title: String
+	editorId: String
+	authorId: String
+	metadata: JSON
+}
+
+union UpdateBookResult = Book | ValidationProblem | NotFoundProblem | ConflictProblem
+
+input DeleteBookInput {
+	bookId: String!
+}
+
+type DeleteBookNoContent {
+	success: Boolean!
+}
+
+union DeleteBookResult = DeleteBookNoContent | NotFoundProblem

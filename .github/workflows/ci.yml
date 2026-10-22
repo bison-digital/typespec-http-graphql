@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every Node major `engines` admits, which is `>=22`. Re-read Node's release schedule when
+        # that range moves.
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+
+      # `typespec-http-zod` and `typespec-hono` are resolved from the registry, exactly as a consumer
+      # resolves them. A change that needs an unreleased library is verifiable only by releasing it
+      # first, which `docs/releasing.md` is about.
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # Applies `patches/` (Stryker's vitest runner, stryker-js #6210) and runs the two install
+      # scripts `allowBuilds` names: esbuild and workerd, which the Workers suites need.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      # After the tests, always: `tsconfig.json` sets flags the build config does not, so a red
+      # typecheck beside green tests is an ordinary outcome, not a contradiction.
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+
+      # The mutation run (`pnpm test:mutation`, about twenty minutes) is not here: its report is
+      # reconciled by hand against `test/mutation/equivalents.json` whenever `src/` changes.

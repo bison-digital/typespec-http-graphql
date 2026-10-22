@@ -1,0 +1,8 @@
+{
+	// Profiled by `wrangler check startup` in `startup.test.ts`, never served.
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "typespec-http-graphql-startup-baseline",
+	"main": "startup-baseline.fixture.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": [],
+}

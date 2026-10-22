@@ -1,0 +1,17 @@
+{
+	// The Worker the socket suite serves: `app.fixture.ts`, compiled from freshly emitted output by
+	// `socket.test.ts` before this file is read.
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "typespec-http-graphql-socket",
+	"main": "app.fixture.ts",
+	"compatibility_date": "2026-08-01",
+	// **No `nodejs_compat`, deliberately.** The flag would let a Node builtin reached from emitted
+	// output resolve and run, which is exactly what this suite exists to refuse: `runtime.ts` is
+	// copied verbatim into a consumer's build, so a builtin there is a broken deploy found at deploy
+	// time and nowhere earlier.
+	"compatibility_flags": [],
+	// **Port 0, so the operating system chooses.** wrangler's default is a fixed 8787, and a second
+	// run, or a stray worker from a killed one, collides on it.
+	"dev": { "port": 0, "inspector_port": 0 },
+	"observability": { "enabled": false },
+}

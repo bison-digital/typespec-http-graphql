@@ -1,0 +1,43 @@
+{
+	"note": "Spector replay: every @typespec/http-specs mock request sent to typespec-hono and to the GraphQL surface with one handler behind both. Floors: entries compared, as a success value, a 404 null and a top-level error. Ceilings: every entry not compared, by why; rest-* are findings, corpus-*, expected-refusal and old-version entries no server should serve as the corpus has them, each listed with its reason. The full list of what was found is in .out-replay/report.json. Held by test/support/ratchet.ts.",
+	"floors": {
+		"mocks:compared": 658,
+		"mocks:compared-error": 3,
+		"mocks:compared-null": 0,
+		"mocks:compared-success": 655,
+		"mocks:declared": 822
+	},
+	"ceilings": {
+		"corpus-request-violates-document": 6,
+		"corpus-response-violates-document": 5,
+		"corpus-undeclared-route": 4,
+		"expected-refusal": 3,
+		"fixture-compile-error": 10,
+		"fixture-nothing-emitted": 101,
+		"non-json-response": 11,
+		"old-version": 2,
+		"surface-dropped": 22
+	},
+	"loosened": [
+		{
+			"reason": "The harness now sends each request as spector's client does (a body's content type wins, its \\: unescaped), mounts the routes under the @server path, and hands response headers in their declared types: 18 more entries compared. Entries no server should serve as the corpus has them are counted in classes of their own, each listed with its reason in report.json: expected-refusal (the corpus answers an error and REST refused), old-version (a version older than the one served), corpus-undeclared-route (a next link no operation declares), corpus-request-violates-document and corpus-response-violates-document (judged by the document @typespec/openapi3 publishes, not by either server).",
+			"change": "ceilings corpus-request-violates-document: new, measured 6"
+		},
+		{
+			"reason": "The harness now sends each request as spector's client does (a body's content type wins, its \\: unescaped), mounts the routes under the @server path, and hands response headers in their declared types: 18 more entries compared. Entries no server should serve as the corpus has them are counted in classes of their own, each listed with its reason in report.json: expected-refusal (the corpus answers an error and REST refused), old-version (a version older than the one served), corpus-undeclared-route (a next link no operation declares), corpus-request-violates-document and corpus-response-violates-document (judged by the document @typespec/openapi3 publishes, not by either server).",
+			"change": "ceilings corpus-response-violates-document: new, measured 5"
+		},
+		{
+			"reason": "The harness now sends each request as spector's client does (a body's content type wins, its \\: unescaped), mounts the routes under the @server path, and hands response headers in their declared types: 18 more entries compared. Entries no server should serve as the corpus has them are counted in classes of their own, each listed with its reason in report.json: expected-refusal (the corpus answers an error and REST refused), old-version (a version older than the one served), corpus-undeclared-route (a next link no operation declares), corpus-request-violates-document and corpus-response-violates-document (judged by the document @typespec/openapi3 publishes, not by either server).",
+			"change": "ceilings corpus-undeclared-route: new, measured 4"
+		},
+		{
+			"reason": "The harness now sends each request as spector's client does (a body's content type wins, its \\: unescaped), mounts the routes under the @server path, and hands response headers in their declared types: 18 more entries compared. Entries no server should serve as the corpus has them are counted in classes of their own, each listed with its reason in report.json: expected-refusal (the corpus answers an error and REST refused), old-version (a version older than the one served), corpus-undeclared-route (a next link no operation declares), corpus-request-violates-document and corpus-response-violates-document (judged by the document @typespec/openapi3 publishes, not by either server).",
+			"change": "ceilings expected-refusal: new, measured 3"
+		},
+		{
+			"reason": "The harness now sends each request as spector's client does (a body's content type wins, its \\: unescaped), mounts the routes under the @server path, and hands response headers in their declared types: 18 more entries compared. Entries no server should serve as the corpus has them are counted in classes of their own, each listed with its reason in report.json: expected-refusal (the corpus answers an error and REST refused), old-version (a version older than the one served), corpus-undeclared-route (a next link no operation declares), corpus-request-violates-document and corpus-response-violates-document (judged by the document @typespec/openapi3 publishes, not by either server).",
+			"change": "ceilings old-version: new, measured 2"
+		}
+	]
+}

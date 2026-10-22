@@ -1,0 +1,54 @@
+diff --git a/dist/src/stryker-setup.js b/dist/src/stryker-setup.js
+index aecfacbe47b285c272c47e54b3d66a716adfdc41..ef28ab47d2e91471d60aec921efc40e95f42a4ab 100644
+--- a/dist/src/stryker-setup.js
++++ b/dist/src/stryker-setup.js
+@@ -63,7 +63,8 @@ function collectTestName({ name, suite, }) {
+         nameParts.unshift(currentSuite.name);
+         currentSuite = currentSuite.suite;
+     }
+-    return nameParts.join(' ').trim();
++    // Vitest 5 matches testNamePattern against the chain joined by ' > ' (stryker-js #6210).
++    return nameParts.join(' > ').trim();
+ }
+ function toRawTestId(test) {
+     return `${test.file?.filepath ?? 'unknown.js'}#${collectTestName(test)}`;
+diff --git a/dist/src/test-helpers.js b/dist/src/test-helpers.js
+index 56cc786f30c524ae18ce87eef1a67fdf26b703c5..16d9c8ddcd09c2f68b7fc1d1f3a7837b43701025 100644
+--- a/dist/src/test-helpers.js
++++ b/dist/src/test-helpers.js
+@@ -8,7 +8,8 @@ export function collectTestName({ name, suite, }) {
+         nameParts.unshift(currentSuite.name);
+         currentSuite = currentSuite.suite;
+     }
+-    return nameParts.join(' ').trim();
++    // Vitest 5 matches testNamePattern against the chain joined by ' > ' (stryker-js #6210).
++    return nameParts.join(' > ').trim();
+ }
+ export function toRawTestId(test) {
+     return `${test.file?.filepath ?? 'unknown.js'}#${collectTestName(test)}`;
+diff --git a/dist/src/vitest-test-runner.js b/dist/src/vitest-test-runner.js
+index 84f1ca026503b8e92b7adc952ec6c6a401943656..e2e3b47b2716b4e43e46ab96e3aa9a99eb98a2bd 100644
+--- a/dist/src/vitest-test-runner.js
++++ b/dist/src/vitest-test-runner.js
+@@ -177,10 +177,17 @@ export class VitestTestRunner {
+             failure ||= testResult.status === TestStatus.Failed;
+             return testResult;
+         });
+-        if (!failure && this.ctx.state.errorsSet.size > 0) {
+-            const errorText = [...this.ctx.state.errorsSet]
+-                .map(errorToString)
+-                .join('\n');
++        // A test file that fails as a whole (it threw while loading, or while collecting) records its
++        // error on the file, not in errorsSet, and may leave no test to report it: read as passing, a
++        // mutant that breaks loading was reported Survived (stryker-js #6150, #6234; as PR #6217).
++        const fileErrors = this.ctx.state.getFiles()
++            .filter((file) => file.result?.state === 'fail')
++            .map((file) => `${file.filepath}: ${file.result?.errors?.map((error) => error.message).join('\n') || 'StrykerJS: Test file execution failed'}`);
++        if (!failure && (fileErrors.length > 0 || this.ctx.state.errorsSet.size > 0)) {
++            const errorText = [
++                ...fileErrors,
++                ...[...this.ctx.state.errorsSet].map(errorToString),
++            ].join('\n');
+             return {
+                 status: DryRunStatus.Error,
+                 errorMessage: `An error occurred outside of a test run: ${errorText}`,

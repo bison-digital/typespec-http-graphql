@@ -1,0 +1,132 @@
+# The schema a person would write by hand for extras/main.tsp, by design.md's rules alone: a read's
+# outcomes are its value, null and top-level errors; a mutation's are a <Name>Result union, the
+# `default` arm's model a member like any declared refusal; a bodyless success is Boolean on a query;
+# two success bodies are a union, a body that is no object wrapped in `value`; a required header is
+# input, a bodyless member carries `success`. Descriptions are left out: the comparison removes them
+# from both sides.
+
+directive @cost(
+	weight: String!
+) on ARGUMENT_DEFINITION | ENUM | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | OBJECT | SCALAR
+
+directive @listSize(
+	assumedSize: Int
+	slicingArguments: [String!]
+	sizedFields: [String!]
+	requireOneSlicingArgument: Boolean = true
+) on FIELD_DEFINITION
+
+type Query {
+	items(first: Int, after: String): ItemConnection
+		@cost(weight: "1")
+		@listSize(
+			assumedSize: 100
+			slicingArguments: ["first"]
+			sizedFields: ["edges", "nodes"]
+			requireOneSlicingArgument: false
+		)
+	item(id: String!, legacy: String @deprecated(reason: "address an item by its id")): Item
+		@cost(weight: "1")
+	itemExists(id: String!): Boolean @cost(weight: "1")
+	itemEither(id: String!, xApiVersion: String!, editionName: String): ItemEitherResult
+		@cost(weight: "1")
+	itemHistory(id: String!, since: UTCDateTimeUnix, after: Long, xWindow: DurationSeconds!): [Item!]
+		@cost(weight: "1")
+	itemAsOf(id: String!, xAsOf: UTCDateTimeHuman!): Item @cost(weight: "1")
+	sortedItems(order: Order = NEWEST): [Item!] @cost(weight: "1")
+}
+
+enum Order {
+	NEWEST
+	OLDEST
+}
+
+type Mutation {
+	createItem(input: CreateItemInput!): CreateItemResult @cost(weight: "1")
+	batchItems: BatchItemsResult @cost(weight: "1")
+	removeItem(input: RemoveItemInput!): RemoveItemResult @cost(weight: "1")
+}
+
+type ItemConnection {
+	edges: [ItemEdge!]!
+	nodes: [Item!]!
+	pageInfo: PageInfo!
+}
+
+type ItemEdge {
+	node: Item!
+	cursor: String!
+}
+
+type PageInfo {
+	hasNextPage: Boolean!
+	hasPreviousPage: Boolean!
+	startCursor: String
+	endCursor: String
+}
+
+type Item {
+	id: String!
+	name: String!
+	label: String @deprecated(reason: "use name")
+	createdAt: UTCDateTime
+}
+
+scalar UTCDateTime @specifiedBy(url: "https://scalars.graphql.org/chillicream/date-time.html")
+
+scalar UTCDateTimeUnix
+
+scalar UTCDateTimeHuman
+	@specifiedBy(url: "https://datatracker.ietf.org/doc/html/rfc7231#section-7.1.1.1")
+
+scalar DurationSeconds
+
+scalar Long @specifiedBy(url: "http://scalars.graphql.org/jakobmerrild/long.html")
+
+type ItemEitherAccepted {
+	value: [String!]!
+}
+
+union ItemEitherResult = Item | ItemEitherAccepted
+
+input CreateItemInput {
+	xStore: String!
+	name: String!
+	note: String
+	ownerId: String
+	kind: String!
+}
+
+type Unmet {
+	message: String!
+}
+
+type Unprocessable {
+	message: String!
+}
+
+type Problem {
+	message: String!
+}
+
+union CreateItemResult = Item | Unmet | Unprocessable | Problem
+
+type BatchItemsOK {
+	value: [Item!]!
+}
+
+union BatchItemsResult = BatchItemsOK
+
+input RemoveItemInput {
+	id: String!
+}
+
+type RemoveItemNoContent {
+	success: Boolean!
+}
+
+type RemoveItemNotFound {
+	success: Boolean!
+}
+
+union RemoveItemResult = RemoveItemNoContent | RemoveItemNotFound

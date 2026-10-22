@@ -1,0 +1,66 @@
+{
+	"note": "Mutation testing: Stryker over the modules stryker.config.mjs mutates, run by the suites vitest.mutation.config.ts names. Floors: mutants detected (killed, timed out, or failing to load), per file. Ceilings: per file, survivors and uncovered mutants, each with its reason in equivalents.json, and timeouts and load failures. Held by test/support/ratchet.ts.",
+	"floors": {
+		"detected:src/connections.ts": 193,
+		"detected:src/inputs.ts": 188,
+		"detected:src/results.ts": 310,
+		"detected:src/runtime.ts": 1284,
+		"detected:src/types.ts": 1265
+	},
+	"ceilings": {
+		"no-coverage:src/connections.ts": 3,
+		"no-coverage:src/inputs.ts": 0,
+		"no-coverage:src/results.ts": 0,
+		"no-coverage:src/runtime.ts": 0,
+		"no-coverage:src/types.ts": 4,
+		"runtime-error:src/connections.ts": 0,
+		"runtime-error:src/inputs.ts": 0,
+		"runtime-error:src/results.ts": 0,
+		"runtime-error:src/runtime.ts": 24,
+		"runtime-error:src/types.ts": 3,
+		"survived:src/connections.ts": 11,
+		"survived:src/inputs.ts": 2,
+		"survived:src/results.ts": 0,
+		"survived:src/runtime.ts": 4,
+		"survived:src/types.ts": 14,
+		"timeout:src/connections.ts": 0,
+		"timeout:src/inputs.ts": 0,
+		"timeout:src/results.ts": 0,
+		"timeout:src/runtime.ts": 10,
+		"timeout:src/types.ts": 4
+	},
+	"loosened": [
+		{
+			"reason": "The tests written since the previous run reach loops it never ran: every timeout is now a mutant its hit limit stopped in an endless loop (\"Hit limit reached\"), which check.test.ts requires of each, so each is a detection, not the clock.",
+			"change": "ceilings timeout:src/runtime.ts: regressed, baseline 5, measured 10"
+		},
+		{
+			"reason": "The tests written since the previous run reach loops it never ran: every timeout is now a mutant its hit limit stopped in an endless loop (\"Hit limit reached\"), which check.test.ts requires of each, so each is a detection, not the clock.",
+			"change": "ceilings timeout:src/types.ts: regressed, baseline 2, measured 4"
+		},
+		{
+			"reason": "typespec-http-zod 0.29.0 publishes decodedPathParameters, so inputs.ts's restatement of its predicate (decodedPathOf) is deleted and its 46 detected mutants with it; types.ts now states enum defaults (graphql-tools#8511 is fixed), and one mutant of that code is an equivalent listed in equivalents.json.",
+			"change": "floors detected:src/inputs.ts: regressed, baseline 234, measured 188"
+		},
+		{
+			"reason": "typespec-http-zod 0.29.0 publishes decodedPathParameters, so inputs.ts's restatement of its predicate (decodedPathOf) is deleted and its 46 detected mutants with it; types.ts now states enum defaults (graphql-tools#8511 is fixed), and one mutant of that code is an equivalent listed in equivalents.json.",
+			"change": "ceilings survived:src/types.ts: regressed, baseline 5, measured 6"
+		},
+		{
+			"reason": "types.ts gained the @discriminator base interface (#inheritanceInterface, #baseObject, and defineInterfaces filling a base interface): six survivors and two uncovered mutants there are checks that narrow a Map lookup or an optional TypeDef field (the interface #baseInterfaces names is always the one registered with members and resolveBy; #baseObjects is set before it; #defs has no undefined key; an interfaces key holding undefined reads as absent), which no compiled program can make go the other way, each listed in equivalents.json with why. Detected rose with the code and its tests: types.ts 1007 to 1147, runtime.ts 1268 to 1284.",
+			"change": "ceilings no-coverage:src/types.ts: regressed, baseline 2, measured 4"
+		},
+		{
+			"reason": "types.ts gained the @discriminator base interface (#inheritanceInterface, #baseObject, and defineInterfaces filling a base interface): six survivors and two uncovered mutants there are checks that narrow a Map lookup or an optional TypeDef field (the interface #baseInterfaces names is always the one registered with members and resolveBy; #baseObjects is set before it; #defs has no undefined key; an interfaces key holding undefined reads as absent), which no compiled program can make go the other way, each listed in equivalents.json with why. Detected rose with the code and its tests: types.ts 1007 to 1147, runtime.ts 1268 to 1284.",
+			"change": "ceilings survived:src/types.ts: regressed, baseline 6, measured 12"
+		},
+		{
+			"reason": "anonymous types named after the model their type was declared in: one equivalent (model?. in declaringModelOf: the compiler sets model on every property it creates or copies); detected types 1155->1196",
+			"change": "ceilings survived:src/types.ts: regressed, baseline 12, measured 13"
+		},
+		{
+			"reason": "types.ts survived 13 -> 14: one new equivalent, namedByHint default case emptied returns undefined, read as false by both callers (equivalents.json); detected 1196 -> 1265 with the shared-anonymous-type rows",
+			"change": "ceilings survived:src/types.ts: regressed, baseline 13, measured 14"
+		}
+	]
+}

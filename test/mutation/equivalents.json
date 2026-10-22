@@ -1,0 +1,309 @@
+{
+	"note": "Each mutant Stryker reports Survived or NoCoverage, by file, mutator, the source text it replaced, its replacement and the trimmed text of the line it starts on, with the reason no test can tell it from the original. Held by test/mutation/check.test.ts: a survivor missing here fails, and so does an entry no survivor matches.",
+	"equivalents": [
+		{
+			"file": "src/connections.ts",
+			"mutator": "StringLiteral",
+			"original": "`${operation.operation.name}: @list with no @pageItems`",
+			"replacement": "``",
+			"line": "throw new Error(`${operation.operation.name}: @list with no @pageItems`);",
+			"reason": "The message of an invariant never thrown. Unreachable from a program that compiled: `getPagingOperation` answers `undefined` only beside the error `missing-paging-items` (node_modules/@typespec/compiler/dist/src/lib/paging.js), and an error stops the compile before the emit stage (core/program.js: `reportDiagnostic` clears `continueToNextStage` on an error, and an error cannot be `#suppress`ed). Compiled: an `@list` operation whose response has no `@pageItems` got `error missing-paging-items: Paged operation 'list' return type must have a property annotated with @pageItems.`"
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "StringLiteral",
+			"original": "`${operation.operation.name}: @pageItems on an array`",
+			"replacement": "``",
+			"line": "throw new Error(`${operation.operation.name}: @pageItems on an array`);",
+			"reason": "The message of an invariant never thrown. Unreachable from a program that compiled: the compiler's `@pageItems` (`pageItemsDecorator`, node_modules/@typespec/compiler/dist/src/lib/paging.js) marks a property only when its type is `kind === \"Model\" && isArrayModelType`, refusing every other type with the error `decorator-wrong-target`, and `getPagingOperation` finds `pageItems` by that mark; so the type here is always an array model, for which `array.kind !== \"Model\"` and `!isArrayModelType(array)` are both false and every form of the condition is false. Compiled: `@pageItems` on `string`, a model, `unknown`, `Record<Book>`, a tuple, `Book[] | null` (inline, aliased, as a named union, as `null | Book[]`, through a template argument), a spread property and an `@@pageItems` augment each got `error decorator-wrong-target: Cannot apply continuationToken decorator to <type> since it is not assignable to Array` (the compiler's message names the wrong decorator); `model BookList is Book[]` and `Page<Book[]>` compiled clean, and are array models."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "StringLiteral",
+			"original": "`${operation.operation.name}: a list item`",
+			"replacement": "``",
+			"line": "if (item.kind !== \"named\") throw new Error(`${operation.operation.name}: a list item`);",
+			"reason": "The message of an invariant never thrown. Unreachable: `TypeProjector.output` answers a list only for an array model (`#model`, the one `listOf` in types.ts), or by passing through to one from a union with one non-null member (`#union`) or from a union variant (`#ref`); `isListOf` follows exactly those three and refused each above as `@pageItems on an array of single items, not of lists`. Probed over fourteen item shapes that compile (`T | null`, `string`, `unknown`, `null`, `Record<string>`, `T[] | string`, `string | T[]`, `T[] | U[]`, `null | T[]`, a named `T[] | null`, `(T[] | null) | null`, a model `is T[]`, and union variants naming a list and a model): each answered a verdict, none reached this throw. The variant naming a list reached it before this change, and crashed the emitter."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "first !== undefined",
+			"replacement": "true",
+			"line": "return first !== undefined && (isBody(program, first) || isBodyRoot(program, first))",
+			"reason": "A paging property's path ends with the property itself: the compiler's `navigateProperties` (node_modules/@typespec/compiler/dist/src/lib/paging.js) calls back with `[...path, prop]`, so `property.path` is never empty and `first` is always defined; the conjunct narrows the type for `isBody`."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "paging === undefined",
+			"replacement": "false",
+			"line": "if (paging === undefined)",
+			"reason": "Unreachable from a program that compiled: `getPagingOperation` answers `undefined` only beside the error `missing-paging-items` (node_modules/@typespec/compiler/dist/src/lib/paging.js), and an error stops the compile before the emit stage (core/program.js: `reportDiagnostic` clears `continueToNextStage` on an error, and an error cannot be `#suppress`ed). Compiled: an `@list` operation whose response has no `@pageItems` got `error missing-paging-items: Paged operation 'list' return type must have a property annotated with @pageItems.`"
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "array.kind !== \"Model\" || !isArrayModelType(array)",
+			"replacement": "false",
+			"line": "if (array.kind !== \"Model\" || !isArrayModelType(array))",
+			"reason": "Unreachable from a program that compiled: the compiler's `@pageItems` (`pageItemsDecorator`, node_modules/@typespec/compiler/dist/src/lib/paging.js) marks a property only when its type is `kind === \"Model\" && isArrayModelType`, refusing every other type with the error `decorator-wrong-target`, and `getPagingOperation` finds `pageItems` by that mark; so the type here is always an array model, for which `array.kind !== \"Model\"` and `!isArrayModelType(array)` are both false and every form of the condition is false. Compiled: `@pageItems` on `string`, a model, `unknown`, `Record<Book>`, a tuple, `Book[] | null` (inline, aliased, as a named union, as `null | Book[]`, through a template argument), a spread property and an `@@pageItems` augment each got `error decorator-wrong-target: Cannot apply continuationToken decorator to <type> since it is not assignable to Array` (the compiler's message names the wrong decorator); `model BookList is Book[]` and `Page<Book[]>` compiled clean, and are array models."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "LogicalOperator",
+			"original": "array.kind !== \"Model\" || !isArrayModelType(array)",
+			"replacement": "array.kind !== \"Model\" && !isArrayModelType(array)",
+			"line": "if (array.kind !== \"Model\" || !isArrayModelType(array))",
+			"reason": "Unreachable from a program that compiled: the compiler's `@pageItems` (`pageItemsDecorator`, node_modules/@typespec/compiler/dist/src/lib/paging.js) marks a property only when its type is `kind === \"Model\" && isArrayModelType`, refusing every other type with the error `decorator-wrong-target`, and `getPagingOperation` finds `pageItems` by that mark; so the type here is always an array model, for which `array.kind !== \"Model\"` and `!isArrayModelType(array)` are both false and every form of the condition is false. Compiled: `@pageItems` on `string`, a model, `unknown`, `Record<Book>`, a tuple, `Book[] | null` (inline, aliased, as a named union, as `null | Book[]`, through a template argument), a spread property and an `@@pageItems` augment each got `error decorator-wrong-target: Cannot apply continuationToken decorator to <type> since it is not assignable to Array` (the compiler's message names the wrong decorator); `model BookList is Book[]` and `Page<Book[]>` compiled clean, and are array models."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "array.kind !== \"Model\"",
+			"replacement": "false",
+			"line": "if (array.kind !== \"Model\" || !isArrayModelType(array))",
+			"reason": "Unreachable from a program that compiled: the compiler's `@pageItems` (`pageItemsDecorator`, node_modules/@typespec/compiler/dist/src/lib/paging.js) marks a property only when its type is `kind === \"Model\" && isArrayModelType`, refusing every other type with the error `decorator-wrong-target`, and `getPagingOperation` finds `pageItems` by that mark; so the type here is always an array model, for which `array.kind !== \"Model\"` and `!isArrayModelType(array)` are both false and every form of the condition is false. Compiled: `@pageItems` on `string`, a model, `unknown`, `Record<Book>`, a tuple, `Book[] | null` (inline, aliased, as a named union, as `null | Book[]`, through a template argument), a spread property and an `@@pageItems` augment each got `error decorator-wrong-target: Cannot apply continuationToken decorator to <type> since it is not assignable to Array` (the compiler's message names the wrong decorator); `model BookList is Book[]` and `Page<Book[]>` compiled clean, and are array models."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "items === undefined",
+			"replacement": "false",
+			"line": "items === undefined ||",
+			"reason": "TypeScript narrowing only: `responseKeyOf` and `parameterOf` answer `undefined` only on a branch that has pushed its reason into `missing`, so `missing.length > 0` has already decided."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "next === undefined",
+			"replacement": "false",
+			"line": "next === undefined ||",
+			"reason": "TypeScript narrowing only: `responseKeyOf` and `parameterOf` answer `undefined` only on a branch that has pushed its reason into `missing`, so `missing.length > 0` has already decided."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "after === undefined",
+			"replacement": "false",
+			"line": "after === undefined ||",
+			"reason": "TypeScript narrowing only: `responseKeyOf` and `parameterOf` answer `undefined` only on a branch that has pushed its reason into `missing`, so `missing.length > 0` has already decided."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "first === undefined",
+			"replacement": "false",
+			"line": "first === undefined",
+			"reason": "TypeScript narrowing only: `responseKeyOf` and `parameterOf` answer `undefined` only on a branch that has pushed its reason into `missing`, so `missing.length > 0` has already decided."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "item.kind !== \"named\"",
+			"replacement": "false",
+			"line": "if (item.kind !== \"named\") throw new Error(`${operation.operation.name}: a list item`);",
+			"reason": "Unreachable: `TypeProjector.output` answers a list only for an array model (`#model`, the one `listOf` in types.ts), or by passing through to one from a union with one non-null member (`#union`) or from a union variant (`#ref`); `isListOf` follows exactly those three and refused each above as `@pageItems on an array of single items, not of lists`. Probed over fourteen item shapes that compile (`T | null`, `string`, `unknown`, `null`, `Record<string>`, `T[] | string`, `string | T[]`, `T[] | U[]`, `null | T[]`, a named `T[] | null`, `(T[] | null) | null`, a model `is T[]`, and union variants naming a list and a model): each answered a verdict, none reached this throw. The variant naming a list reached it before this change, and crashed the emitter."
+		},
+		{
+			"file": "src/connections.ts",
+			"mutator": "ConditionalExpression",
+			"original": "only !== undefined",
+			"replacement": "true",
+			"line": "return present.length === 1 && only !== undefined && isListOf(only);",
+			"reason": "TypeScript narrowing only: `present` holds the union's variant types, never `undefined`, so where `present.length === 1` holds its first element is defined; the conjunct narrows `only` for `isListOf`."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "value.valueKind === \"StringValue\"",
+			"replacement": "true",
+			"line": ": value.valueKind === \"StringValue\"",
+			"reason": "With the mutant, `wire` is `value.value` for every value that is neither an enum member nor a string: a `Numeric` object, a boolean, a scalar constructor's object, or `undefined` for an array or object value (`@typespec/compiler` `Value`). A member's wire is a string or number primitive (`member.value ?? member.name`, or a union's literal), so `find` matches none of them, and answers `undefined` as it does for the original's `undefined` wire."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "StringLiteral",
+			"original": "\"\"",
+			"replacement": "\"Stryker was here!\"",
+			"line": "const name = type.name ?? \"\";",
+			"reason": "Deliberate upstream mirror (`composeTemplateName`'s `type.name ?? \"\"`), kept: `templateNameOf` is reached only through `declaredNameOf` (a declared model, union or enum, which has a name) and through a template argument, which `templateNameOf` filters to those whose `name` is a string, so the fallback is never taken."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "StringLiteral",
+			"original": "`${model.name}: a payload type that is no model`",
+			"replacement": "``",
+			"line": "throw new Error(`${model.name}: a payload type that is no model`);",
+			"reason": "The message of the `#effectiveOf` invariant throw, which no input reaches: `getEffectivePayloadType` answers a model for a model (`@typespec/http/dist/src/metadata.js` 447-455)."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "arg.kind === \"Model\"",
+			"replacement": "true",
+			"line": "if (arg.kind === \"Model\" && isArrayModelType(arg)) return typeNameOf(getTypeName(arg));",
+			"reason": "`isArrayModelType` is `Boolean(type.indexer && type.indexer.key.name === \"integer\")` (`@typespec/compiler/dist/src/core/type-utils.js` 23-26), and only a `Model` has an `indexer`, so it is false for every other kind with or without the kind check, which only narrows the type for TypeScript."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "ref.kind !== \"named\"",
+			"replacement": "false",
+			"line": "if (ref.kind !== \"named\") return undefined;",
+			"reason": "For a list ref, `ref.name` is undefined: `Map.prototype.get(undefined)` finds no def (keys are names), and `BUILT_IN_JSON[undefined]` reads the key `\"undefined\"` (ECMA-262 ToPropertyKey), which the table lacks, so `json` is undefined and every arm answers undefined, as the guard does."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "OptionalChaining",
+			"original": "def?.kind",
+			"replacement": "def.kind",
+			"line": "if (def?.kind !== \"object\")",
+			"reason": "`#objectDefOf` is called only with names `#objects` holds, each set in `#model` after the model's name was claimed and followed by `#register` in the same call (a field that throws between the two ends the emit), and nothing deletes a def, so the def is always defined when `defineInterfaces` runs."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "effective.kind !== \"Model\"",
+			"replacement": "false",
+			"line": "if (effective.kind !== \"Model\")",
+			"reason": "Invariant throw: `getEffectivePayloadType` answers a model for a model (`@typespec/http/dist/src/metadata.js` 447-455: the type itself, or `getEffectiveModelType`'s result, declared `Model` in `@typespec/compiler/dist/src/core/checker.d.ts`), and `#effectiveOf` is called only with a model, so the throw is never reached and skipping it changes nothing. The fixture's `Shapes.Copies` bodies (one model's spread properties) compile and answer that named model, as every other model answers itself."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "StringLiteral",
+			"original": "\"OffsetDateTimeUnix\"",
+			"replacement": "\"\"",
+			"line": "unixTimestamp: \"OffsetDateTimeUnix\",",
+			"reason": "Deliberate upstream mirror (`SCALAR_MAPPINGS`), kept: TypeSpec refuses `unixTimestamp` on an `offsetDateTime` (`validateEncodeData` in `@typespec/compiler/dist/src/lib/decorators.js` checks it against `utcDateTime` only), so no compiled program reaches the row. A compile of `@encode(\"unixTimestamp\", int64) a: offsetDateTime`, of the same on `offsetDateTime | null`, and of a scalar `OffsetUnix extends offsetDateTime` so encoded each answers `error invalid-encode: Encoding 'unixTimestamp' cannot be used on type 'offsetDateTime'. Expected: utcDateTime.`"
+		},
+		{
+			"file": "src/inputs.ts",
+			"mutator": "ConditionalExpression",
+			"original": "parameter.param.type.kind === \"String\"",
+			"replacement": "true",
+			"line": "if (dispositionOf(parameter) === \"supplied\" && parameter.param.type.kind === \"String\") {",
+			"reason": "`dispositionOf` answers `supplied` only on its branch where `parameter.param.type.kind === \"String\"`, so the conjunct is true wherever it is evaluated; it narrows the type for `.value`."
+		},
+		{
+			"file": "src/inputs.ts",
+			"mutator": "ConditionalExpression",
+			"original": "body.property === undefined",
+			"replacement": "false",
+			"line": "description: body.property === undefined ? undefined : getDoc(program, body.property),",
+			"reason": "`getDoc(program, undefined)` answers `undefined`, the guarded branch's own value: it reads `program.stateMap(getDocKey(\"self\")).get(target)?.value` (`getDocDataInternal`, node_modules/@typespec/compiler/dist/src/core/intrinsic-type-state.js), and a doc is only ever set on a decorated type, never at an absent key. Measured on `Widgets_annotate`'s implicit body, whose `property` is undefined."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "!isCompositeType(named)",
+			"replacement": "false",
+			"line": "if (!isCompositeType(named)) return own;",
+			"reason": "For a leaf the selection below costs nothing, so the early return is TypeScript's narrowing to a composite type and saves work, no more. selectionCost answers the costliest of `schema.getPossibleTypes(type)`, which graphql-js reads for a type that is no union as `getImplementations(type).objects`, from an `Object.create(null)` map keyed by interface name, `?? { objects: [], interfaces: [] }` (node_modules/graphql/type/schema.js:126-134); a schema's type names are unique, so a leaf's names no interface and the list is empty, the cost 0, and `times(multiplier, 0)` is 0 for any multiplier, Infinity included. On the way, listSizeOf, sizeOf and listLevels only read the field and the request and write fieldCost's own locals."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "StringLiteral",
+			"original": "\",\"",
+			"replacement": "\"\"",
+			"line": "return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(\",\")}}`;",
+			"reason": "The memo key only has to be equal exactly when two inputs are. Without the separator an object's entries still read back one way: each key is a JSON string, which its closing quote ends, and each value a self-delimiting canonical form (a JSON string, a number, true, false or null, which the next entry's opening quote or the closing brace ends, or a bracketed form), so the mutant's key is the original's with the entry separators deleted, a deletion that can be undone: two inputs share a mutant key exactly when they share an original one."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "ConditionalExpression",
+			"original": "bytes.length % 2 !== 0",
+			"replacement": "false",
+			"line": "if (bytes.length % 2 !== 0) return undefined;",
+			"reason": "An odd byte count leaves a final code unit whose low byte is 0 (`bytes[index + 1] ?? 0`), U+0000 to U+FF00 in steps of 256. JSON text ends in a value's last character (`]`, `}`, a quote, a digit, or the last letter of true, false or null, all ASCII with a non-zero low byte) or in insignificant whitespace, which is U+0009, U+000A, U+000D and U+0020 only (ECMA-404 section 2), so JSON.parse throws a SyntaxError (ECMA-262 JSON.parse) and the catch answers undefined, as the guard does."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "BlockStatement",
+			"original": "{\n\t\treturn undefined;\n\t}",
+			"replacement": "{}",
+			"line": "} catch {",
+			"reason": "`parsed` is declared without a value, so it is still undefined when JSON.parse throws, and the next line answers undefined for anything that is not an array, as the catch's return does."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[]",
+			"replacement": "[\"Stryker was here\"]",
+			"line": "const members = def.members ?? [];",
+			"reason": "`#baseInterfaces` names only the interface `#inheritanceInterface` registered: it is set right after `#book.claim(interfaceName, …)` succeeds and `#register({ kind: \"interface\", …, members: [...new Set(members)], resolveBy: { kind: \"base\", … } })`, the book refuses that name to any other owner (so `define` and every other `#register` cannot store another def under it), and each later `#defs.set` of it spreads that def (`{ ...nestedDef, interfaces }` in `#inheritanceInterface`, `{ ...def, fields }` here), keeping its kind, `members` and `resolveBy`. So `def.members` is always defined, and the right of `??` never runs; the fallback narrows the optional field's type."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[]",
+			"replacement": "[\"Stryker was here\"]",
+			"line": "members.push(...(nestedDef.members ?? []));",
+			"reason": "`#baseInterfaces` names only the interface `#inheritanceInterface` registered: it is set right after `#book.claim(interfaceName, …)` succeeds and `#register({ kind: \"interface\", …, members: [...new Set(members)], resolveBy: { kind: \"base\", … } })`, the book refuses that name to any other owner (so `define` and every other `#register` cannot store another def under it), and each later `#defs.set` of it spreads that def (`{ ...nestedDef, interfaces }` in `#inheritanceInterface`, `{ ...def, fields }` here), keeping its kind, `members` and `resolveBy`. So `nestedDef.members` is always defined, and the right of `??` never runs; the fallback narrows the optional field's type."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "def?.kind !== \"interface\"",
+			"replacement": "false",
+			"line": "if (!reached.has(name) || def?.kind !== \"interface\" || own === undefined) continue;",
+			"reason": "`#baseInterfaces` names only the interface `#inheritanceInterface` registered: it is set right after `#book.claim(interfaceName, …)` succeeds and `#register({ kind: \"interface\", …, members: [...new Set(members)], resolveBy: { kind: \"base\", … } })`, the book refuses that name to any other owner (so `define` and every other `#register` cannot store another def under it), and each later `#defs.set` of it spreads that def (`{ ...nestedDef, interfaces }` in `#inheritanceInterface`, `{ ...def, fields }` here), keeping its kind, `members` and `resolveBy`. So `def` is defined and `def.kind` is `\"interface\"` for every name the loop reads, and the conjunct is always false; it narrows `def` to the interface variant."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "OptionalChaining",
+			"original": "def?.kind",
+			"replacement": "def.kind",
+			"line": "if (!reached.has(name) || def?.kind !== \"interface\" || own === undefined) continue;",
+			"reason": "`#baseInterfaces` names only the interface `#inheritanceInterface` registered: it is set right after `#book.claim(interfaceName, …)` succeeds and `#register({ kind: \"interface\", …, members: [...new Set(members)], resolveBy: { kind: \"base\", … } })`, the book refuses that name to any other owner (so `define` and every other `#register` cannot store another def under it), and each later `#defs.set` of it spreads that def (`{ ...nestedDef, interfaces }` in `#inheritanceInterface`, `{ ...def, fields }` here), keeping its kind, `members` and `resolveBy`. So `def` is defined for every name the loop reads, and `def.kind` cannot throw; the `?.` is for the Map's `undefined` in the type."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "own === undefined",
+			"replacement": "false",
+			"line": "if (!reached.has(name) || def?.kind !== \"interface\" || own === undefined) continue;",
+			"reason": "`#baseObjects` holds every base `#baseInterfaces` does: `#inheritanceInterface` calls `#baseObject(model, …)`, which sets `#baseObjects` first thing (or finds it set), before it claims and sets the base's interface, and nothing deletes from either map. So `own` is always defined, and the conjunct is always false."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "nested === undefined",
+			"replacement": "false",
+			"line": "const nestedDef = nested === undefined ? undefined : this.#defs.get(nested);",
+			"reason": "`this.#defs` is keyed by TypeDef names, each a string (`#register` sets `def.name`; every other `#defs.set` names an existing def), so `this.#defs.get(undefined)` answers `undefined`, as the original's `undefined` branch does; the next line then takes the same path. The condition narrows `nested` for the call."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "nestedDef.resolveBy !== undefined",
+			"replacement": "true",
+			"line": "if (nestedDef?.kind === \"interface\" && nestedDef.resolveBy !== undefined) {",
+			"reason": "`#baseInterfaces` names only the interface `#inheritanceInterface` registered: it is set right after `#book.claim(interfaceName, …)` succeeds and `#register({ kind: \"interface\", …, members: [...new Set(members)], resolveBy: { kind: \"base\", … } })`, the book refuses that name to any other owner (so `define` and every other `#register` cannot store another def under it), and each later `#defs.set` of it spreads that def (`{ ...nestedDef, interfaces }` in `#inheritanceInterface`, `{ ...def, fields }` here), keeping its kind, `members` and `resolveBy`. So a `nestedDef` that is an interface always has `resolveBy`, and the conjunct is always true; it narrows the optional field's type."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "parents === undefined",
+			"replacement": "false",
+			"line": "...(parents === undefined ? {} : { interfaces: parents }),",
+			"reason": "Spreading `{ interfaces: undefined }` gives the interface an `interfaces` key holding `undefined`, which every reader takes as absent: `plan.ts` reads `def.interfaces ?? []`, `render.ts`'s `interfacesOf` answers `[]` for `undefined`, `sdl.ts` tests `def.interfaces === undefined`, `#inheritanceInterface` reads `nestedDef.interfaces ?? []`, and `define` compares defs by `JSON.stringify`, which drops an `undefined` property. No code reads the key's presence (`in`, `Object.keys`). The conditional spread is for `exactOptionalPropertyTypes`."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "OptionalChaining",
+			"original": "model?.properties",
+			"replacement": "model.properties",
+			"line": "if (model?.properties.get(current.name) === current && namesItself(model)) owners.push(model);",
+			"reason": "Every property the walk reaches has its `model`: the first is read from a model's own `properties` (`propertiesOf`, `#payloadOf`, `#declaringOf`), and each later one is a copy's `sourceProperty`, itself a property of the model it was copied from. The compiler sets `model` on every property it puts in a model: a declared one in `checkModelProperties` (`newProp.model = parentModel`), and each copy beside its `sourceProperty`, for `is` (`model: type`), a spread (`model: parentModel`), an intersection (`model: intersection`), an operation's `is` (`model: clone`) and the typekit's filtered copy (`model: newModel`), all in node_modules/@typespec/compiler/dist/src/core/checker.js. The `?.` is for `ModelProperty.model`'s optional type."
+		},
+		{
+			"file": "src/types.ts",
+			"mutator": "ConditionalExpression",
+			"original": "default:\n\t\t\treturn false;",
+			"replacement": "default:",
+			"line": "default:",
+			"reason": "`namedByHint`'s default case emptied falls out of the switch, and the function returns `undefined` for every type that is neither a union nor a model. Both callers read it as `false` and nothing else: `#holdingsOf` as `!namedByHint(property.type)`, which skips the property either way, and the model case itself inside `isArrayModelType(type) && namedByHint(type.indexer.value)`, a disjunct of a `return`, where `undefined` and `false` are both falsy and `||` yields the second operand only when the first is false (`type.name === \"\"`, a boolean). The return type is `boolean` at compile time only; no caller stores, compares or serialises the value. Neither an output, a name nor a warning can tell them apart."
+		}
+	]
+}

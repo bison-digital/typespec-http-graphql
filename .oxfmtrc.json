@@ -1,0 +1,15 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"ignorePatterns": [
+		"**/.out-*/**",
+		"**/.out/**",
+		"**/tsconfig.agreement.json",
+		"dist/**",
+		"test/names/upstream-naming.ts",
+		"test/conformance/expectations.json"
+	],
+	"useTabs": true,
+	"printWidth": 100,
+	"tabWidth": 2,
+	"proseWrap": "preserve"
+}
