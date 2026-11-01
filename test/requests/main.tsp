@@ -85,12 +85,22 @@ interface Books {
       title: string;
       format: Format;
       price: Price;
+      /** A list of enum values, and a list of input objects, each converted item by item. */
+      formats?: Format[];
+      prices?: Price[];
+      /** Required, with a default: a value no request has to send. */
+      copies: int32 = 1;
     },
   ): {
     @statusCode _: 201;
     @body book: Book;
   } | Conflict;
-  @route("/shelve") @get shelve(@path id: string): Book | Shelved;
+  /** A query parameter named as a connection's cursor is, on a read that is no connection. */
+  @route("/shelve") @get shelve(
+    @path id: string,
+    @query after?: string,
+    @query copies: int32 = 1,
+  ): Book | Shelved;
   @route("/move") @post move(@path id: string): Book | Moved;
   @route("/titles") @list @get titles(@query @pageSize limit?: int32 = 10, @query @continuationToken cursor?: string): TitlePage;
   @route("/edition") @get edition(@path id: string): Edition;

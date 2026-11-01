@@ -116,6 +116,8 @@ function handlersFor(): object {
 				},
 			};
 		},
+		// An answer holding only a string, which has a `length` of its own but is no item.
+		Shelves_byLength: () => ({ status: 200, body: ["abc"] }),
 		Authors_messy: (_ctx: unknown, { ids }: { readonly ids: readonly string[] }) => {
 			calls.push({ operationId: "Authors_messy", ids });
 			return {
@@ -290,6 +292,23 @@ const Book = new GraphQLObjectType({
 		byId: { type: Author, resolve: refsBatch("author_id", "id", "authors") },
 		byHandle: { type: Author, resolve: refsBatch("editor_handle", "handle", "authors") },
 		asEditor: { type: Author, resolve: refsBatch("author_id", "id", "editors") },
+		/** A batch matched by a key a string has too: its items are objects, and a string is none. */
+		shelfByLength: {
+			type: GraphQLString,
+			resolve: resolverFor(
+				call({
+					operationId: "Shelves_byLength",
+					input: z.looseObject({ lengths: z.array(z.number()) }),
+					arms: [{ status: 200, schema: z.array(z.unknown()) }],
+					bound: [{ wire: "lengths", parent: "page_count" }],
+					batch: { wire: "lengths", key: "length", items: undefined, size: undefined },
+					projection: { "200": { as: "value" } },
+				}),
+				handlersFor,
+				deps,
+				{},
+			),
+		},
 		messyAuthor: {
 			type: Author,
 			resolve: batchOf(
@@ -660,6 +679,13 @@ describe("a batch's calls", () => {
 			{ messyAuthor: { id: "a-2" } },
 			{ messyAuthor: { id: "a-1" } },
 		]);
+	});
+
+	it("take no string for an item, though it has a key of the name they match by", async () => {
+		books = [{ id: "b-1", page_count: 3 }];
+		const result = await run("{ books { shelfByLength } }");
+		expect(result.errors).toBeUndefined();
+		expect(result.data?.["books"]).toEqual([{ shelfByLength: null }]);
 	});
 
 	it("refuse a value alone, at the bound key and in the operation's words", async () => {

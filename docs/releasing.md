@@ -13,6 +13,7 @@ suite never performs: it installs the versions its lockfile names.
 | 0.2.0        | `^0.34.0`           | 0.31.0                 | 1.15 or later | 17        |
 | 0.3.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 | 0.3.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
+| 0.4.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 
 A new library minor is a new row: `^0.34.0` does not reach 0.35.0. Move this package's range in the
 same round as `typespec-hono`'s, so a consumer installs one copy of the library for both surfaces.
@@ -83,6 +84,21 @@ into an empty directory with `typespec-hono` 0.31.1: one `typespec-http-zod@0.34
 | arms whose anonymous enums share a name but not their values                            | `link-arms-conflict` on both                                        |
 | every root field of five specs with result unions, envelopes and connections of scalars | each document valid; a discriminated union's every member a success |
 | two batched links to one batch read, one by `id`, one by `handle`, one value for both   | each its own author, in two calls                                   |
+
+### `0.4.0`, rehearsed with `typespec-postman` 0.8.0
+
+Published to the rehearsal registry at 0.4.0, naming `"typespec-http-zod": "^0.34.0"`, with
+`typespec-postman` 0.8.0 naming it `^0.4.0`, and installed into an empty directory with
+`typespec-hono` 0.31.1: one `typespec-http-zod@0.34.1`, deduped under both, `graphql@17.0.2`,
+`graphql-yoga@6.0.0`. There, a bookshop whose create answers the book, whose `status` is an enum, or
+a problem whose `status` is an `Int!`:
+
+| step                                                                                                | result                                                                             |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `tsp compile .` with `@typespec/openapi3`, this package, `typespec-hono` and `typespec-postman`     | exit 0                                                                             |
+| every document `graphqlRequestsOf` wrote, through graphql-js `validate`                             | none refused; with 0.3.1 from npm, `createBook` is, `Fields "status" conflict`     |
+| every fixture under `test/`, compiled by 0.3.1 from npm and by the rehearsal 0.4.0                  | 217 files the same byte for byte, and the same diagnostics, for each of 64 entries |
+| the collection run by the Postman CLI against the generated server, which refuses a duplicate title | exit 0, every assertion passing; `createBook` reads `bookId` out of its answer     |
 
 ## Release sequence
 

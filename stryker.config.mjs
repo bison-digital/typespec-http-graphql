@@ -26,6 +26,7 @@ export default {
 		"src/connections.ts",
 		"src/inputs.ts",
 		"src/types.ts",
+		"src/requests.ts",
 	],
 	coverageAnalysis: "perTest",
 	/**

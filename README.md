@@ -391,6 +391,40 @@ writes requests for the HTTP surface writes them for this one from it, and no do
 the schema. Before this emitter has run on a program it answers `undefined`. typespec-postman writes
 its collection's GraphQL requests this way.
 
+**A field that cannot share its response name with another of its selection set is aliased.** Each
+member of a union is selected by a fragment, and GraphQL refuses two fields under one response name
+whose types differ, nullability included (spec §5.3.2): a book's `status` enum beside a problem's
+`status: Int!` would make the document invalid. The first field under a name keeps it, a later one is
+compared with that first one, and two objects answering under one name have their selections compared
+below them, as Apollo Federation's query planner decides. A field that cannot merge is aliased as
+`@graphql-tools/utils` spells an alias, its name and its type with `!` as `NonNull`, `[` as `List` and
+`]` dropped:
+
+```graphql
+mutation CreateBook($input: CreateBookInput!) {
+	createBook(input: $input) {
+		__typename
+		... on Book {
+			id
+			status
+			title
+		}
+		... on ValidationProblem {
+			titleStringNonNull: title
+			statusIntNonNull: status
+		}
+	}
+}
+```
+
+An alias never takes the name another field of the set is selected by, and `__alias_<n>` follows it
+where it would. Every alias counts toward `aliasLimit`.
+
+`resultPathsOf(wire)` says where an answer holds a value of the REST response's body: for a path into
+a 2xx arm's JSON body, by wire names, the path below `data` at which each success member's selection
+holds it, alias included, keyed by typename. typespec-postman reads a created id out of a create
+mutation's answer with it.
+
 ## What a client sees
 
 ### Names

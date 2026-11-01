@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildSchema } from "graphql";
+import { buildSchema, parse, validate } from "graphql";
 import { beforeAll, describe, expect, it } from "vitest";
 import { compileFixture } from "../support/compile-fixture.js";
 import { refusalsOf } from "../support/refused-fixtures.js";
@@ -13,6 +13,8 @@ import { relayViolations } from "./relay.js";
  * follow**, documents this package did not write: the GraphQL Cursor Connections Specification
  * (relay.dev/graphql/connections.htm) for every connection, and the GraphQL Cost Directives
  * Specification (ibm.github.io/graphql-specs/cost-spec.html) for every `@cost` and `@listSize`.
+ * **And every document `graphqlRequestsOf` writes for them, against the GraphQL specification's own
+ * validation rules**, as graphql-js implements them.
  *
  * **Swept, not listed.** Every `.tsp` under `test/` that no sibling imports is a fixture's entry
  * point, and each is compiled into a directory of this suite's own. A hand-kept list would go stale
@@ -73,22 +75,66 @@ const connectionsIn = (sdl: string): string[] =>
 
 const graded: { readonly fixture: string; readonly sdl: string }[] = [];
 const threw: string[] = [];
+/** Every document a fixture's compile wrote a request for, beside the schema of its service. */
+const documents: {
+	readonly fixture: string;
+	readonly field: string;
+	readonly document: string;
+	readonly sdl: string;
+}[] = [];
+
+interface RequestsRead {
+	readonly service: string;
+	readonly requests: readonly { readonly field: string; readonly document: string }[];
+}
+
+/**
+ * A service's `schema.graphql`: the compile's one, or, where several services wrote one, the one in
+ * the directory the library names after the service. Anything else throws, so no service's
+ * documents go ungraded for want of a schema.
+ */
+function schemaOf(schemas: readonly string[], service: string): string {
+	const [only] = schemas;
+	if (schemas.length === 1 && only !== undefined) return only;
+	const own = schemas.filter((file) => basename(dirname(file)) === service.split(".").at(-1));
+	const [found] = own;
+	if (own.length !== 1 || found === undefined) {
+		throw new Error(`${service}: ${own.length} of ${schemas.length} schemas are its own`);
+	}
+	return found;
+}
 
 beforeAll(async () => {
 	for (const entry of fixtureEntries()) {
 		const id = `${relative(testRoot, entry.dir).replaceAll("/", "__")}__${entry.name}`;
 		const outDir = join(here, ".out", "relay", id);
+		let program: Awaited<ReturnType<typeof compileFixture>>["program"];
 		try {
-			await compileFixture(entry.dir, entry.name, {
+			({ program } = await compileFixture(entry.dir, entry.name, {
 				outDir,
 				expectedErrors: refusalsOf(relative(testRoot, join(entry.dir, entry.name))),
-			});
+			}));
 		} catch (error) {
 			threw.push(`${id}: ${error instanceof Error ? error.message : String(error)}`);
 			continue;
 		}
-		for (const file of schemasUnder(outDir)) {
+		const schemas = schemasUnder(outDir);
+		for (const file of schemas) {
 			graded.push({ fixture: id, sdl: readFileSync(file, "utf8") });
+		}
+		// Read from the copy of this package the compiler ran, as a tool that writes requests reads it.
+		const read = (
+			program.emitters.find((emitter) => emitter.metadata.name === "typespec-http-graphql")?.library
+				.entrypoint?.esmExports as
+				| { readonly graphqlRequestsOf?: (program: unknown) => readonly RequestsRead[] | undefined }
+				| undefined
+		)?.graphqlRequestsOf;
+		for (const service of read?.(program) ?? []) {
+			if (service.requests.length === 0) continue;
+			const sdl = readFileSync(schemaOf(schemas, service.service), "utf8");
+			for (const request of service.requests) {
+				documents.push({ fixture: id, field: request.field, document: request.document, sdl });
+			}
 		}
 	}
 }, 900_000);
@@ -173,6 +219,26 @@ describe("every schema every fixture emits keeps the IBM cost specification", ()
 			costViolations(buildSchema(sdl)).map((violation) => `${fixture}: ${violation}`),
 		);
 		expect(violations).toEqual([]);
+	});
+});
+
+describe("every document graphqlRequestsOf writes for every fixture is one its schema accepts", () => {
+	it("finds documents to grade, across the fixtures that declare result unions", () => {
+		// The acceptance and idiom fixtures alone write over forty.
+		expect(documents.length).toBeGreaterThanOrEqual(40);
+		expect(new Set(documents.map(({ fixture }) => fixture)).size).toBeGreaterThanOrEqual(10);
+	});
+
+	it("finds no validation error in any of them", () => {
+		const schemas = new Map<string, ReturnType<typeof buildSchema>>();
+		const errors = documents.flatMap(({ fixture, field, document, sdl }) => {
+			const schema = schemas.get(sdl) ?? buildSchema(sdl);
+			schemas.set(sdl, schema);
+			return validate(schema, parse(document)).map(
+				(error) => `${fixture} ${field}: ${error.message}`,
+			);
+		});
+		expect(errors).toEqual([]);
 	});
 });
 

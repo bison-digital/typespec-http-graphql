@@ -276,7 +276,7 @@ describe("graphqlRequestsOf", () => {
 	it("hands the handler what the REST request with the same values hands it", async () => {
 		const values = {
 			parameters: { "Idempotency-Key": "k1" },
-			body: { title: "One", format: "e-book", price: { amount: 5, currency: "GBP" } },
+			body: { title: "One", format: "e-book", price: { amount: 5, currency: "GBP" }, copies: 2 },
 		};
 		await rest.request("/books", {
 			method: "POST",
@@ -331,5 +331,289 @@ describe("graphqlRequestsOf", () => {
 		expect(srcRequestsOf(compiled.program)).toBeUndefined();
 		const alone = await compileFixture(here, "main", { outName: "without", withoutGraphQL: true });
 		expect(srcRequestsOf(alone.program)).toBeUndefined();
+	});
+});
+
+/**
+ * **Result unions whose members share a field name with another response shape** (`conflicts.tsp`),
+ * one union for each way two fields of one selection set fail to merge (GraphQL 5.3.2). Each document
+ * below is written out from the rule, Apollo Federation's decision with graphql-tools' spelling: the
+ * first field keeps its name, a later one that cannot merge with it is `<name><Type>` with `!` as
+ * `NonNull`, `[` as `List` and `]` dropped, and `__alias_<n>` follows a name already taken.
+ */
+describe("graphqlRequestsOf, where union members' fields cannot merge", () => {
+	let conflicts: readonly GraphQLRequest[];
+	let conflictSchema: GraphQLSchema;
+	let executable: GraphQLSchema;
+	const restApp = new Hono();
+	let calls: string[];
+	let answers: Record<string, unknown>;
+
+	const named = (field: string): GraphQLRequest => {
+		const request = conflicts.find((candidate) => candidate.field === field);
+		if (request === undefined) throw new Error(`no request for ${field}`);
+		return request;
+	};
+
+	beforeAll(async () => {
+		const fixture = await compileFixture(here, "conflicts", { withServer: true });
+		const ref = fixture.program.emitters.find(
+			(emitter) => emitter.metadata.name === "typespec-http-graphql",
+		);
+		const read = (ref?.library.entrypoint?.esmExports as { graphqlRequestsOf?: RequestsOf })
+			?.graphqlRequestsOf;
+		conflicts = read?.(fixture.program)?.[0]?.requests ?? [];
+		conflictSchema = buildSchema(readFileSync(join(fixture.outDir, "schema.graphql"), "utf8"));
+		const handlers = Object.fromEntries(
+			[
+				"Books_create",
+				"Books_shelve",
+				"Books_edition",
+				"Books_copy",
+				"Shelves_read",
+				"Formats_read",
+			].map((operationId) => [
+				operationId,
+				() => {
+					calls.push(operationId);
+					return answers[operationId];
+				},
+			]),
+		);
+		const generated = (await import(join(fixture.outDir, "graphql.gen.ts"))) as {
+			readonly createSchema: (handlersFor: () => object, deps: object) => GraphQLSchema;
+		};
+		executable = generated.createSchema(() => handlers, {
+			authorize: () => "allow",
+			context: () => ({}),
+		});
+		const routes = (await import(join(fixture.serverDir, "app.gen.ts"))) as {
+			readonly registerRoutes: (app: Hono, handlersFor: () => object, deps: object) => unknown;
+		};
+		routes.registerRoutes(restApp, () => handlers, {
+			authorize: () => async (_c: Context, next: () => Promise<void>) => {
+				await next();
+			},
+			context: () => ({}),
+			noContext: (c: Context) => c.json({}, 401),
+			notAcceptable: (c: Context) => c.body(null, 406),
+			invalid: (result: { readonly success: boolean }, c: Context) =>
+				result.success ? undefined : c.json({}, 400),
+		});
+	}, 300_000);
+
+	beforeEach(() => {
+		calls = [];
+		answers = {};
+	});
+
+	it("writes, for every root field, a document the schema accepts", () => {
+		// Non-vacuity: every field of the fixture has a request.
+		expect(conflicts.map((request) => request.field).toSorted()).toEqual([
+			"copy",
+			"createBook",
+			"edition",
+			"format",
+			"shelf",
+			"shelving",
+		]);
+		for (const request of conflicts) {
+			expect(validate(conflictSchema, parse(request.document)), request.field).toEqual([]);
+		}
+	});
+
+	it("aliases an enum beside an Int, a nullable beside a non-null, and a name another field takes", () => {
+		expect(named("createBook").document).toBe(
+			[
+				"mutation CreateBook($input: CreateBookInput!) {",
+				"  createBook(input: $input) {",
+				"    __typename",
+				"    ... on Book {",
+				"      id",
+				"      status",
+				"      title",
+				"      labels",
+				"      edition",
+				"    }",
+				"    ... on Problem {",
+				"      type",
+				"      titleStringNonNull: title",
+				"      statusIntNonNull__alias_0: status",
+				"    }",
+				"    ... on Rejected {",
+				"      statusIntNonNull__alias_0: status",
+				"      statusIntNonNull",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+	});
+
+	it("aliases a list beside one value, and compares a third member with the first, not the last", () => {
+		expect(named("shelving").document).toBe(
+			[
+				"query Shelving($id: String!) {",
+				"  shelving(id: $id) {",
+				"    __typename",
+				"    ... on Book {",
+				"      id",
+				"      status",
+				"      title",
+				"      labels",
+				"      edition",
+				"    }",
+				"    ... on Shelved {",
+				"      editionStringNonNull: edition",
+				"      labelsStringNonNull: labels",
+				"    }",
+				"    ... on Reserved {",
+				"      editionStringNonNull: edition",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+	});
+
+	it("aliases an object beside a leaf, and a leaf below two objects that merge", () => {
+		expect(named("shelf").document).toBe(
+			[
+				"query Shelf($id: String!) {",
+				"  shelf(id: $id) {",
+				"    __typename",
+				"    ... on Shelf {",
+				"      name",
+				"      value",
+				"    }",
+				"    ... on ShelfAccepted {",
+				"      valueListPrintedNonNullNonNull: value {",
+				"        __typename",
+				"        pages",
+				"      }",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+		expect(named("edition").document).toBe(
+			[
+				"query Edition($id: String!) {",
+				"  edition(id: $id) {",
+				"    __typename",
+				"    ... on EditionPrint {",
+				"      kind",
+				"      value {",
+				"        __typename",
+				"        pages",
+				"      }",
+				"    }",
+				"    ... on EditionDigital {",
+				"      kind",
+				"      value {",
+				"        __typename",
+				"        pagesLongNonNull: pages",
+				"      }",
+				"    }",
+				"  }",
+				"}",
+			].join("\n"),
+		);
+	});
+
+	it("selects no link as a variant's payload, so the request calls one handler", async () => {
+		expect(named("copy").document).not.toContain("format");
+		answers = { Books_copy: { status: 200, body: { kind: "paperback" } } };
+		const result = await executeThroughYoga(
+			executable,
+			{ query: named("copy").document, variables: { id: "b1" } },
+			{},
+		);
+		expect(result.errors).toBeUndefined();
+		expect(calls).toEqual(["Books_copy"]);
+	});
+
+	/**
+	 * **The path names where the REST answer's own value is, in the real GraphQL answer.** Each arm
+	 * answers one body through both surfaces and reads the REST response at the wire path and the
+	 * GraphQL response at the path `resultPathsOf` gives, for a member that is aliased there.
+	 */
+	it("finds a success member's value of the REST body where the GraphQL answer holds it", async () => {
+		const at = (value: unknown, path: readonly string[]): unknown =>
+			path.reduce<unknown>(
+				(inner, key) =>
+					typeof inner === "object" && inner !== null ? Reflect.get(inner, key) : undefined,
+				value,
+			);
+		const cases: readonly {
+			readonly field: string;
+			readonly operationId: string;
+			readonly url: string;
+			readonly answer: { readonly status: number; readonly body: unknown };
+			readonly typename: string;
+			readonly wire: readonly string[];
+		}[] = [
+			{
+				field: "shelving",
+				operationId: "Books_shelve",
+				url: "/books/b1/shelve",
+				answer: { status: 202, body: { edition: "second", labels: "one" } },
+				typename: "Shelved",
+				wire: ["edition"],
+			},
+			{
+				field: "shelving",
+				operationId: "Books_shelve",
+				url: "/books/b1/shelve",
+				answer: { status: 203, body: { edition: "third" } },
+				typename: "Reserved",
+				wire: ["edition"],
+			},
+			{
+				field: "shelf",
+				operationId: "Shelves_read",
+				url: "/shelves/s1",
+				answer: { status: 202, body: [{ pages: 10 }, { pages: 12 }] },
+				typename: "ShelfAccepted",
+				wire: ["1", "pages"],
+			},
+			{
+				field: "edition",
+				operationId: "Books_edition",
+				url: "/books/b1/edition",
+				answer: { status: 200, body: { kind: "digital", value: { pages: 1024 } } },
+				typename: "EditionDigital",
+				wire: ["value", "pages"],
+			},
+		];
+		for (const { field, operationId, url, answer, typename, wire } of cases) {
+			answers = { [operationId]: answer };
+			const overRest = (await (await restApp.request(url)).json()) as unknown;
+			const request = named(field);
+			const result = await executeThroughYoga(
+				executable,
+				{ query: request.document, variables: { id: url.split("/")[2] } },
+				{},
+			);
+			expect(result.errors, field).toBeUndefined();
+			const path = request.resultPathsOf(wire).get(typename);
+			expect(path, `${field} ${typename}`).toBeDefined();
+			expect(at(result.data, path ?? []), `${field} ${typename}`).toEqual(at(overRest, wire));
+			expect(at(overRest, wire), `${field} ${typename}`).not.toBeUndefined();
+		}
+	});
+
+	it("names no path for a value no success member selects, nor for a refusal", () => {
+		expect([...named("createBook").resultPathsOf(["id"])]).toEqual([
+			["Book", ["createBook", "id"]],
+		]);
+		expect([...named("createBook").resultPathsOf(["type"])]).toEqual([]);
+		expect([...named("shelf").resultPathsOf(["0", "pages"])]).toEqual([
+			["ShelfAccepted", ["shelf", "valueListPrintedNonNullNonNull", "0", "pages"]],
+		]);
+		expect([...named("shelf").resultPathsOf(["pages", "0"])]).toEqual([]);
+		expect([...named("format").resultPathsOf(["binding"])]).toEqual([
+			["Format", ["format", "binding"]],
+		]);
 	});
 });

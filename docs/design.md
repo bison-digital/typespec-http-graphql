@@ -1,6 +1,6 @@
 # `typespec-http-graphql` — design
 
-**Status:** built, as version 0.2.0. The cross-ecosystem research behind it is in
+**Status:** built, as version 0.4.0. The cross-ecosystem research behind it is in
 [`research.md`](research.md); the README states the package as it ships.
 
 ## What it is
@@ -124,7 +124,9 @@ The escape hatch below covers the odd exception without abandoning generation.
 - **A sibling may read what this emitter planned, and nothing here changes for it.**
   `graphqlRequestsOf(program)` is a read of the plans `$onEmit` recorded, one request per root field,
   which typespec-postman reaches through `program.emitters`, so it reads the copy the compiler ran.
-  Asking writes, reports and plans nothing; before `$onEmit` has run it answers `undefined`.
+  Asking writes, reports and plans nothing; before `$onEmit` has run it answers `undefined`. A field
+  that cannot merge with another under its response name is aliased, Apollo Federation's decision in
+  `@graphql-tools/utils`' spelling, and `resultPathsOf` names where an answer holds a body's value.
 
 ### Why not an existing package
 
@@ -837,23 +839,23 @@ Unchanged from upstream's conventions, with these rules:
 
 This follows `typespec-http-mcp/docs/architecture.md`. `test/architecture/` pins the boundaries a regression would cost most: `runtime.ts` reaches only `graphql` and zod, the renderers never reach the compiler, `names.ts` only `change-case`, and the decorators never `surface.ts`.
 
-| module           | owns                                                                            | may reach                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `lib.ts`         | options (derived from the library's), diagnostics, the package name, state keys | the compiler, the library                                                                        |
-| `decorators.ts`  | `$queryField`, `$mutationField`, `$link`: record only                           | the compiler, `lib.ts`                                                                           |
-| `surface.ts`     | reads the declarations, runs the checks above, and yields the validated surface | the compiler and its typekit, `@typespec/http`, the library's types, `decorators.ts`, `names.ts` |
-| `names.ts`       | GraphQL naming, matching upstream's pipeline; `NameBook`                        | `change-case` only                                                                               |
-| `types.ts`       | TypeSpec type → GraphQL type model; visibility variants; scalars                | the compiler, `@typespec/http`, `@typespec/openapi` (`isReadonlyProperty`)                       |
-| `inputs.ts`      | arguments, input objects, header mechanics, wire-key tables                     | the compiler, `@typespec/http`, the library's types                                              |
-| `connections.ts` | core paging decorators → connection plan                                        | the compiler, `@typespec/http`                                                                   |
-| `results.ts`     | arms → query and mutation result shapes, members, wrappers, codes               | the compiler, `@typespec/http`, the library                                                      |
-| `model.ts`       | the shared vocabulary (TypeRef, TypeDef, FieldPlan), with no logic              | nothing                                                                                          |
-| `render.ts`      | `graphql.gen.ts` from the model                                                 | `model.ts`, the library's types                                                                  |
-| `sdl.ts`         | `schema.graphql` from the model, with directives, checked by `buildSchema`      | `model.ts`, `graphql`                                                                            |
-| `coexistence.ts` | peer emitters writing one directory with different library options              | the compiler                                                                                     |
-| `runtime.ts`     | what emitted code imports at run time                                           | **only `graphql`**; no Node builtins                                                             |
-| `requests.ts`    | the recorded plans, as a document per root field and variables from REST values | `model.ts`, `names.ts`, the compiler's and the library's types                                   |
-| `emitter.ts`     | orchestration, and `emitted + dropped === declared`                             | everything above                                                                                 |
+| module           | owns                                                                                                                                                 | may reach                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `lib.ts`         | options (derived from the library's), diagnostics, the package name, state keys                                                                      | the compiler, the library                                                                        |
+| `decorators.ts`  | `$queryField`, `$mutationField`, `$link`: record only                                                                                                | the compiler, `lib.ts`                                                                           |
+| `surface.ts`     | reads the declarations, runs the checks above, and yields the validated surface                                                                      | the compiler and its typekit, `@typespec/http`, the library's types, `decorators.ts`, `names.ts` |
+| `names.ts`       | GraphQL naming, matching upstream's pipeline; `NameBook`                                                                                             | `change-case` only                                                                               |
+| `types.ts`       | TypeSpec type → GraphQL type model; visibility variants; scalars                                                                                     | the compiler, `@typespec/http`, `@typespec/openapi` (`isReadonlyProperty`)                       |
+| `inputs.ts`      | arguments, input objects, header mechanics, wire-key tables                                                                                          | the compiler, `@typespec/http`, the library's types                                              |
+| `connections.ts` | core paging decorators → connection plan                                                                                                             | the compiler, `@typespec/http`                                                                   |
+| `results.ts`     | arms → query and mutation result shapes, members, wrappers, codes                                                                                    | the compiler, `@typespec/http`, the library                                                      |
+| `model.ts`       | the shared vocabulary (TypeRef, TypeDef, FieldPlan), with no logic                                                                                   | nothing                                                                                          |
+| `render.ts`      | `graphql.gen.ts` from the model                                                                                                                      | `model.ts`, the library's types                                                                  |
+| `sdl.ts`         | `schema.graphql` from the model, with directives, checked by `buildSchema`                                                                           | `model.ts`, `graphql`                                                                            |
+| `coexistence.ts` | peer emitters writing one directory with different library options                                                                                   | the compiler                                                                                     |
+| `runtime.ts`     | what emitted code imports at run time                                                                                                                | **only `graphql`**; no Node builtins                                                             |
+| `requests.ts`    | the recorded plans, as a document per root field, aliased where it must be, the path to a body's value in its answer, and variables from REST values | `model.ts`, `names.ts`, the compiler's and the library's types                                   |
+| `emitter.ts`     | orchestration, and `emitted + dropped === declared`                                                                                                  | everything above                                                                                 |
 
 **Peer dependencies:** `graphql ^17`, `zod`, `@typespec/compiler`, `@typespec/http`,
 `@typespec/openapi`. `graphql` is also a build-time dependency of the emitter, for `buildSchema` and

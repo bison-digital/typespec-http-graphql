@@ -3,6 +3,37 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
+## [0.4.0] - 2026-11-01
+
+A minor: `graphqlRequestsOf` publishes a new member, `resultPathsOf`, and writes other documents
+where a union's members cannot share a field's name. Every file this emitter writes is what 0.3.1
+writes.
+
+### Fixed
+
+- **`graphqlRequestsOf` writes a document the schema accepts where a union's members share a field
+  name with another response shape.** A book's `status` enum beside a problem's `status: Int!`, or a
+  nullable `title` beside a problem's `title: String!`, were selected under one response name in two
+  fragments, which GraphQL refuses (spec §5.3.2): `Fields "status" conflict because they return
+conflicting types "BookStatus!" and "Int!"`. Such a field is now aliased.
+  - The first field under a name keeps it, and a later one is compared with that first one, never
+    with the last one written, as Apollo Federation's query planner decides. Two objects answering
+    under one name have their selections compared below them.
+  - The alias is spelled as `@graphql-tools/utils` spells one, the field's name and its type with
+    `!` as `NonNull`, `[` as `List` and `]` dropped: `statusIntNonNull: status`.
+  - An alias never takes the name another field of the set is selected by; `__alias_<n>` follows it
+    where it would.
+- **A link is never selected as a variant's payload.** A discriminated variant whose only field
+  beside the discriminator was a link had that link selected, so the request called a second handler.
+
+### Added
+
+- **`GraphQLRequest.resultPathsOf(wire)`**: where each success member of a field's answer holds a
+  value of the REST response's body, by typename, the path below `data` with any alias in it.
+  typespec-postman 0.8.0 reads a created id out of a create mutation's answer with it.
+
+Requires `typespec-http-zod` `^0.34.0`, as 0.3 does.
+
 ## [0.3.1] - 2026-10-22
 
 Fixes to 0.3.0's batched links, links chosen by a kind and `graphqlRequestsOf`. For a spec that uses

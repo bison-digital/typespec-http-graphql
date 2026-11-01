@@ -3,6 +3,7 @@
 	"floors": {
 		"detected:src/connections.ts": 214,
 		"detected:src/inputs.ts": 196,
+		"detected:src/requests.ts": 503,
 		"detected:src/results.ts": 330,
 		"detected:src/runtime.ts": 1577,
 		"detected:src/types.ts": 1305
@@ -10,21 +11,25 @@
 	"ceilings": {
 		"no-coverage:src/connections.ts": 3,
 		"no-coverage:src/inputs.ts": 0,
+		"no-coverage:src/requests.ts": 1,
 		"no-coverage:src/results.ts": 0,
 		"no-coverage:src/runtime.ts": 2,
 		"no-coverage:src/types.ts": 5,
 		"runtime-error:src/connections.ts": 0,
 		"runtime-error:src/inputs.ts": 0,
+		"runtime-error:src/requests.ts": 0,
 		"runtime-error:src/results.ts": 0,
 		"runtime-error:src/runtime.ts": 24,
 		"runtime-error:src/types.ts": 3,
 		"survived:src/connections.ts": 15,
 		"survived:src/inputs.ts": 2,
+		"survived:src/requests.ts": 20,
 		"survived:src/results.ts": 0,
 		"survived:src/runtime.ts": 12,
 		"survived:src/types.ts": 18,
 		"timeout:src/connections.ts": 0,
 		"timeout:src/inputs.ts": 0,
+		"timeout:src/requests.ts": 8,
 		"timeout:src/results.ts": 0,
 		"timeout:src/runtime.ts": 12,
 		"timeout:src/types.ts": 4

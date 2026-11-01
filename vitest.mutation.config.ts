@@ -26,6 +26,8 @@ export default defineConfig({
 			"test/connections/**/*.test.ts",
 			"test/plan/**/*.test.ts",
 			"test/limits/limits.test.ts",
+			"test/requests/written.test.ts",
+			"test/requests/recorded.test.ts",
 		],
 		testTimeout: 60_000,
 		/**

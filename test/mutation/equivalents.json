@@ -456,6 +456,174 @@
 			"replacement": "true",
 			"line": "let scalar: Scalar | undefined = pageSize.type.kind === \"Scalar\" ? pageSize.type : undefined;",
 			"reason": "Walks a page size's type as a scalar whatever it is: a type that is no scalar has no `baseScalar`, so the walk reads that one type and stops, and `getMaxValue` and `getMaxValueExclusive` answer nothing for a type the compiler's decorators never marked (they apply to numeric scalars and properties), so no bound is added."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ArrayDeclaration",
+			"original": "[]",
+			"replacement": "[\"Stryker was here\"]",
+			"line": "if (def.kind !== \"object\" && def.kind !== \"interface\") return [];",
+			"reason": "Unreachable: `leavesOf` is called with a union's member, which the plan always defines as an object type, or by `selectionOf` with a name that is no union and no leaf, an object or interface. The guard narrows `def` to a type with fields and never returns."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "field.call === undefined",
+			"replacement": "false",
+			"line": "if (root === undefined || field.call === undefined) return [];",
+			"reason": "Every root field calls a handler: plan.ts plans a root field only from an operation, and gives it that operation's `call`. The check narrows the type for `writtenRequestOf`; no recorded root field has `call` undefined, so it never returns here."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "def.resolveBy.kind === \"discriminator\"",
+			"replacement": "true",
+			"line": "def.resolveBy.kind === \"discriminator\" ? def.resolveBy.property : undefined;",
+			"reason": "A union resolved by member has no `resolveBy.property`, so `discriminator` is `undefined` whether the kind is checked or not."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "def.kind !== \"object\" && def.kind !== \"interface\"",
+			"replacement": "false",
+			"line": "if (def.kind !== \"object\" && def.kind !== \"interface\") return [];",
+			"reason": "Unreachable: `leavesOf` is called with a union's member, which the plan always defines as an object type, or by `selectionOf` with a name that is no union and no leaf, an object or interface. The guard narrows `def` to a type with fields and never returns."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "OptionalChaining",
+			"original": "first?.name",
+			"replacement": "first.name",
+			"line": "def.fields.length === 1 && first?.name === \"value\"",
+			"reason": "`first` is read only once `def.fields.length` is 1, so it is defined and the optional chain never short-circuits."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "OptionalChaining",
+			"original": "first?.wire",
+			"replacement": "first.wire",
+			"line": ": def.fields.length === 2 && first?.wire === discriminator",
+			"reason": "`first` is read only once `def.fields.length` is 2, so it is defined and the optional chain never short-circuits."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "def.kind === \"object\"",
+			"replacement": "true",
+			"line": "def.kind === \"object\" ? def.fields.find((field) => field.name === name) : undefined;",
+			"reason": "Every connection type and its `PageInfo` is an object type (connections.ts defines both), so the guard always holds; it narrows `def` to a type with fields."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "StringLiteral",
+			"original": "\"{}\"",
+			"replacement": "\"\"",
+			"line": "ref.kind === \"list\" ? `[${shapeOf(defs, ref.of)}]` : isLeaf(defs, ref) ? ref.name : \"{}\";",
+			"reason": "A composite's shape is compared only with another field's shape. An empty string still differs from every leaf type's name and from a list's `[...]`, so every comparison answers as with `{}`."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "StringLiteral",
+			"original": "\"\"",
+			"replacement": "\"Stryker was here!\"",
+			"line": "return `${inner}${ref.nonNull ? \"!\" : \"\"}`;",
+			"reason": "The nullable suffix is compared only with another shape's. Any string other than `!` keeps a nullable shape apart from a non-null one, as the empty string does, so every comparison answers alike."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "selection.kind === \"field\"",
+			"replacement": "true",
+			"line": "(selection): selection is FieldNode => selection.kind === \"field\" && selection.wire === head,",
+			"reason": "A fragment has no `wire`, so `selection.wire === head` is false for it whether or not its kind is checked; the kind check narrows the type."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "projection.as === \"wrap\"",
+			"replacement": "true",
+			"line": "if (projection.as === \"wrap\") wrapped.set(projection.type, projection.hasBody);",
+			"reason": "A projection other than `wrap` sets `wrapped` with `hasBody` undefined, for a member type or for no type, and `add` reads `undefined` as not wrapped, exactly as a missing entry."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "selection.kind === \"fragment\"",
+			"replacement": "true",
+			"line": "selection.kind === \"fragment\" && selection.on === typename,",
+			"reason": "A field node has no `on`, so `selection.on === typename` is false for it whether or not its kind is checked; the kind check narrows the type."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "fragment !== undefined",
+			"replacement": "true",
+			"line": "if (fragment !== undefined) add(typename, fragment.selections);",
+			"reason": "Every success typename is a member of the field's union (results.ts projects a 2xx arm only onto a member), and `selectionOf` writes a fragment for every member, so the fragment is always found."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)",
+			"replacement": "true",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof input.body === \"object\" && input.body !== null",
+			"replacement": "true",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "LogicalOperator",
+			"original": "typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)",
+			"replacement": "typeof input.body === \"object\" && input.body !== null || !Array.isArray(input.body)",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "LogicalOperator",
+			"original": "typeof input.body === \"object\" && input.body !== null",
+			"replacement": "typeof input.body === \"object\" || input.body !== null",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "typeof input.body === \"object\"",
+			"replacement": "true",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "ConditionalExpression",
+			"original": "input.body !== null",
+			"replacement": "true",
+			"line": "else if (typeof input.body === \"object\" && input.body !== null && !Array.isArray(input.body)) {",
+			"reason": "An unnamed body is a model's properties, so a body sent with one is an object. Anything else spread into the merge adds only index keys (a string's or a list's) or none (null), and the merge is read only by argument and input-field wire names, none of which is an index."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "BooleanLiteral",
+			"original": "true",
+			"replacement": "false",
+			"line": "const TYPENAME_TYPE: TypeRef = named(\"String\", true);",
+			"reason": "Every `__typename` node shares this one type, so changing it changes all of them alike: no two can differ in shape, and none is ever aliased."
+		},
+		{
+			"file": "src/requests.ts",
+			"mutator": "StringLiteral",
+			"original": "\"String\"",
+			"replacement": "\"\"",
+			"line": "const TYPENAME_TYPE: TypeRef = named(\"String\", true);",
+			"reason": "Every `__typename` node shares this one type, so changing it changes all of them alike: no two can differ in shape, and none is ever aliased."
 		}
 	]
 }

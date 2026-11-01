@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildSchema, parse, validate } from "graphql";
 import { beforeAll, describe, expect, it } from "vitest";
 import { $lib } from "../src/lib.js";
 import { compileFixture } from "./support/compile-fixture.js";
@@ -109,6 +110,20 @@ describe("the README's examples compile", () => {
 		expect(existsSync(join(workDir, "generated", "graphql.gen.ts"))).toBe(true);
 	});
 
+	it("shows a document whose aliases that surface needs, and accepts", () => {
+		const shown = blocks(readme, "graphql");
+		expect(shown).toHaveLength(1);
+		const document = shown[0] ?? "";
+		const schema = buildSchema(readFileSync(join(workDir, "generated", "schema.graphql"), "utf8"));
+		expect(validate(schema, parse(document)).map((error) => error.message)).toEqual([]);
+		const unaliased = document.replace(/^(\s*)\w+: (\w+)$/gm, "$1$2");
+		expect(unaliased).not.toBe(document);
+		expect(validate(schema, parse(unaliased)).map((error) => error.message)).toEqual([
+			'Fields "status" conflict because they return conflicting types "BookStatus!" and "Int!". Use different aliases on the fields to fetch both if this was intentional.',
+			'Fields "title" conflict because they return conflicting types "String" and "String!". Use different aliases on the fields to fetch both if this was intentional.',
+		]);
+	});
+
 	it("compiles every TypeScript example against what that surface emits", () => {
 		let output = "";
 		try {
@@ -164,6 +179,16 @@ describe("the documentation set holds together", () => {
 			expect(linked).toContain(doc);
 		}
 		expect(linked.filter((doc) => !existsSync(join(packageRoot, doc)))).toEqual([]);
+	});
+
+	it("the design names the version package.json publishes", () => {
+		const { version } = JSON.parse(read("package.json")) as { version: string };
+		expect(read("docs/design.md")).toMatch(
+			new RegExp(
+				`^\\*\\*Status:\\*\\* built, as version ${version.replaceAll(".", "\\.")}\\.`,
+				"m",
+			),
+		);
 	});
 
 	it("the changelog names the version package.json publishes", () => {
