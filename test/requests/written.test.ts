@@ -453,6 +453,7 @@ describe("a document's result selection", () => {
 			after: "cursor",
 			item: named("Book", true),
 			maximum: undefined,
+			minimum: undefined,
 			assumedSize: undefined,
 		};
 		const types: readonly TypeDef[] = [

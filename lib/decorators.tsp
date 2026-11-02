@@ -14,6 +14,14 @@ model FieldOptions {
    * 404 a GraphQL client never sees, a query string it cannot send.
    */
   description?: string;
+
+  /**
+   * The calls one call of the field makes, where its handler makes more than one: a number, written
+   * as GraphQL writes a Float and as `@cost(weight:)` takes one (cost specification §7.1), `"1"`
+   * unless stated. It multiplies the weight the field is given for the calls it makes, so a cost
+   * limit counts every call a document makes, the backend's own among them.
+   */
+  weight?: string;
 }
 
 /** What a link's declaration may say beyond its name, its operation and its parameters. */

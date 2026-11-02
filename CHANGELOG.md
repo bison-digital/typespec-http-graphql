@@ -3,6 +3,85 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
+## [0.5.0] - 2026-11-02
+
+A minor: a connection pages differently on `first: 0` and beneath a minimum page size, and refuses
+another connection's cursor, an input type a model already names keeps that name, and a bounded list
+states its bound. What regenerating changes, beside `graphql-runtime.gen.ts`, the runtime copy:
+
+- `graphql.gen.ts`, for a connection whose page size declares a minimum: its call carries it.
+- `schema.graphql` and `graphql.gen.ts`, for a list bounded by `@maxItems`: `@listSize`, on an
+  interface's field too, where every implementer's field states the same.
+- Both, for a connection whose page size's bound is a fraction: its call carries the whole bound
+  within it, and where that bound is a maximum and the page size has no default, the connection's
+  `@listSize` carries it as `assumedSize`, as it does for a whole maximum.
+- Both, for a model named as an input type, and for a field given a `weight`.
+
+Measured over every fixture of this package's suite, 68 compiles, against 0.4.1 from npm: every
+other file is what 0.4.1 writes. No fixture that compiles declares a fractional bound; a bookshop
+declaring `@maxValue(10.5)` and `@minValueExclusive(2.5)` was compiled by both to measure that case.
+
+### Fixed
+
+- **`first: 0` answers no edge where the page size declares a minimum.** It was written to the page
+  size as it is, so a page size declaring `@minValue(1)`, as a REST `limit` usually does, refused it
+  as `BAD_USER_INPUT`, against Relay §4.4. The handler is now asked for one item past those skipped,
+  the least that tells whether an edge follows.
+- **No handler is asked for a page below the page size's minimum**, for `first: 0` or for a `first`
+  beneath it, `first: 2` beside `@minValue(5)`: it is asked for the minimum, and the edges are cut to
+  `first`, as Relay §4.4 asks. A fractional bound is the whole bound within it, `@minValue(2.5)`
+  three items and `@maxValue(10.5)` ten, where it bounded nothing.
+- **`after` refuses a cursor another connection issued.** A cursor held a backend token and a skip
+  count, so a cursor from one connection given to another handed its handler the other list's token.
+  A connection is its field's operation and every other argument and bound value, as Relay counts
+  one, so a cursor of `books(tag: "scifi")` is refused by `books(tag: "poetry")`, as one of another
+  operation is, and as a raw backend token already was: `BAD_USER_INPUT`, before any handler call.
+  **A cursor issued by 0.4 or earlier is refused the same way**: a client paging across the upgrade
+  is answered `BAD_USER_INPUT`, and starts again at the first page.
+- **A cursor asks for no page past 2^31 - 1, the largest `first` GraphQL carries.** Resuming from a
+  cursor asks for its skip plus `first`, and a cursor is unsigned, so where the page size declares
+  no maximum a forged skip asked for a page of any size up to 2^53. A skip past 2^31 - 1 is now
+  `BAD_USER_INPUT`, and no page past 2^31 - 1 is asked for. Where the page size declares a maximum,
+  the page asked for stays within it, as in 0.4, whatever the skip; a skip past the maximum is taken,
+  since a backend that answers a page longer than it was asked for issues one. Without a maximum, a
+  forged cursor can still ask for a page of 2^31 - 1 items, which no cost limit counts, so bound
+  every page size a client can reach.
+- **Who may call is answered before a page's arguments are.** A bad cursor or a negative `first` was
+  refused before `authorize` ran, so a caller who may not call heard what was wrong with its paging
+  rather than `UNAUTHENTICATED` or `FORBIDDEN`.
+
+### Added
+
+- **`weight` on `@queryField`, `@mutationField` and `@link`**: the calls one call of the field
+  makes, where its handler calls more than one backend. It multiplies the weight the field is given,
+  so `costLimit` counts every call a document makes. A number written as GraphQL writes a Float, as
+  `@cost(weight:)` takes one, and at least 0, this package's own rule; another, or one too small for
+  a double, `"1e-400"`, is `invalid-weight`, and the declaration is dropped. A product past the
+  largest double is that double, a Float GraphQL can write.
+- **`@listSize(assumedSize: N)` on a list field bounded by `@maxItems(N)`**, its property's or its
+  array type's (cost specification §8.1), so `typeCost` counts its items where it assumed it
+  infinite, and `typeCostLimit` admits a document selecting it. An interface's field states it too,
+  where every implementer's field states the same, so an analyser costing a selection on the
+  interface finds it. In a list of lists that is the outer list's bound: `@listSize` has one size,
+  so an inner list stays infinite.
+
+### Changed
+
+- **An input type whose model is named as one keeps the model's name**: `AuthorInput` is
+  `AuthorInput`, not `AuthorInputInput`, as `@typespec/graphql` names it, wherever no other type owns
+  that name; a model that is also an output type keeps the suffix on its input type, and so does each
+  of two input types planned from one model. Where another model is named `AuthorInputInput`, the
+  two collide as they did in 0.4, warned `graphql-name-collision`. The input types
+  this renames are named in each variable definition that uses one, so a client document or a
+  persisted query declaring `$author: AuthorInputInput!` fails validation once the schema is
+  regenerated, and has to name `AuthorInput`. The name holds while the model is only an input: a read
+  that later answers it makes it an output type too, and its input type `AuthorInputInput` again.
+- **The README's mount on graphql-yoga 6**: Yoga's `requestId` takes the id the host's middleware
+  set, so `/graphql` answers with the id the rest of the app logs, and on Node, with Yoga's execution
+  cancellation, a client that goes away is answered without an error logged, and no further handler
+  call is made for it. The mount's `app.onError` answers every other error as Hono's own handler
+  does, keeping the headers middleware set. The examples are run on graphql-yoga 6.
+
 ## [0.4.1] - 2026-11-02
 
 0.4.0 was tagged, and its release stopped before npm, so 0.4.1 is the first 0.4 published. Every file

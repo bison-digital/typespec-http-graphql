@@ -323,6 +323,37 @@ const schema = new GraphQLSchema({
 					RULES,
 				),
 			},
+			flooredBooks: {
+				type: BookConnection,
+				args: { first: { type: GraphQLInt }, after: { type: GraphQLString } },
+				resolve: resolverFor(
+					call({
+						operationId: "Books_list",
+						input: z.looseObject({
+							"page-size": z.int32().min(3).max(50).default(20),
+							"page-token": z.string().exactOptional(),
+						}),
+						arms: [{ status: 200, schema: pageSchema }],
+						projection: { "200": { as: "connection" } },
+						args: {
+							first: { wire: "page-size", dropNull: true },
+							after: { wire: "page-token", dropNull: true },
+						},
+						// A page size of at least 3, as the plan reads `@minValue(3)`, and at most 50.
+						connection: {
+							items: "items",
+							next: "next_token",
+							first: "page-size",
+							after: "page-token",
+							maximum: 50,
+							minimum: 3,
+						},
+					}),
+					handlersFor,
+					deps,
+					RULES,
+				),
+			},
 			ping: {
 				type: GraphQLBoolean,
 				resolve: resolverFor(
@@ -841,34 +872,122 @@ describe("a connection", () => {
 	});
 
 	/**
-	 * A cursor as this runtime spells one (its doc comment): `[token, skip]` as JSON, each UTF-16 code
-	 * unit as two bytes, big-endian, in base64url (RFC 4648 §5). Spelled here with Node's own encoder,
-	 * so a refusal below is of the content named, never of a spelling the runtime does not read.
+	 * A cursor as this runtime spells one (its doc comment): `[issuer, token, skip]` as JSON, each
+	 * UTF-16 code unit as two bytes, big-endian, in base64url (RFC 4648 §5). Spelled here with Node's
+	 * own encoder, so a refusal below is of the content named, never of a spelling the runtime does
+	 * not read.
 	 */
 	const cursorOf = (json: string): string =>
 		Buffer.from(json, "utf16le").swap16().toString("base64url");
 
+	/** FNV-1a, 32 bits, over bytes, as the algorithm is published; held to its own vectors below. */
+	const fnv1a = (bytes: Uint8Array): string => {
+		let hash = 0x811c9dc5;
+		for (const byte of bytes) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+		return hash.toString(16).padStart(8, "0");
+	};
+	/**
+	 * **The connection a cursor counts**: the digest of the operation, NUL and its other input as sorted
+	 * JSON, each UTF-16 code unit as two bytes, big-endian. `{}` for a field given only first and after.
+	 */
+	const issuerOf = (operationId: string, input = "{}"): string =>
+		fnv1a(Buffer.from(`${operationId}\u0000${input}`, "utf16le").swap16());
+	const BOOKS = issuerOf("Books_list");
+	const cursorAt = (issuer: string, token: string | null, skip: number): string =>
+		cursorOf(JSON.stringify([issuer, token, skip]));
+
+	it("spells the digest a cursor names as FNV-1a's published vectors spell it", () => {
+		expect(fnv1a(Buffer.from(""))).toBe("811c9dc5");
+		expect(fnv1a(Buffer.from("a"))).toBe("e40c292c");
+		expect(fnv1a(Buffer.from("foobar"))).toBe("bf9cf968");
+	});
+
+	/**
+	 * **`first: 0` asks for one item past those skipped**, the least that says whether an edge follows,
+	 * and never fewer than the page size's minimum nor more than its maximum: no edge, and `endCursor`
+	 * where the page began.
+	 */
+	it.each([
+		["no cursor and no floor", "books", undefined, { "page-size": 1 }],
+		["no cursor, a floor of 3", "flooredBooks", undefined, { "page-size": 3 }],
+		["two skipped into a page", "books", 2, { "page-size": 3, "page-token": "n2" }],
+		["fifty skipped, the maximum", "flooredBooks", 50, { "page-size": 50, "page-token": "n2" }],
+	])(
+		"on first: 0 with %s, asks for the page that says whether an edge follows",
+		async (_case, field, skip, input) => {
+			next["Books_list"] = three;
+			const after = skip === undefined ? "" : `, after: "${cursorAt(BOOKS, "n2", skip)}"`;
+			const result = await run(
+				`{ ${field}(first: 0${after}) { edges { cursor } pageInfo { hasNextPage endCursor } } }`,
+			);
+			expect(calls.map((c) => c.input)).toEqual([input]);
+			expect(result.errors).toBeUndefined();
+			expect(result.data?.[field]).toMatchObject({ edges: [] });
+		},
+	);
+
+	it("on first: 0, names where the page began as the end cursor, and that an edge follows", async () => {
+		next["Books_list"] = three;
+		const result = await run(
+			`{ books(first: 0) { edges { cursor } pageInfo { hasNextPage endCursor } } }`,
+		);
+		expect(result.data).toEqual({
+			books: {
+				edges: [],
+				pageInfo: { hasNextPage: true, endCursor: cursorAt(BOOKS, null, 0) },
+			},
+		});
+	});
+
 	it("resumes from a cursor naming a page and a position in it", async () => {
 		next["Books_list"] = three;
-		const result = await run(`{ books(after: "${cursorOf('["n2",1]')}") { nodes { id } } }`);
+		const result = await run(`{ books(after: "${cursorAt(BOOKS, "n2", 1)}") { nodes { id } } }`);
 		expect(calls.map((c) => c.input)).toEqual([{ "page-size": 20, "page-token": "n2" }]);
 		expect(result.data).toEqual({ books: { nodes: [{ id: "c2" }, { id: "c3" }] } });
 	});
 
-	/** `["n",1] ` is sixteen bytes; its first fifteen are twenty digits, and `I` is six bits of 0x20. */
-	const lastDigitAlone = `${Buffer.from('["n",1] ', "utf16le").swap16().subarray(0, 15).toString("base64url")}I`;
-	/** The cursor of `["abcdef",0]`, its ninth digit replaced by standard base64's `+`. */
-	const foreignDigit = `${cursorOf('["abcdef",0]').slice(0, 8)}+${cursorOf('["abcdef",0]').slice(9)}`;
+	/**
+	 * `[BOOKS, "nnnnn", 1]` and a space: forty-six bytes, whose first forty-five are sixty digits, and
+	 * `I` is six bits of the space's 0x20, so a decoder reading a last digit alone as a byte reads the
+	 * cursor back whole.
+	 */
+	const spaced = Buffer.from(`${JSON.stringify([BOOKS, "nnnnn", 1])} `, "utf16le").swap16();
+	const lastDigitAlone = `${spaced.subarray(0, spaced.length - 1).toString("base64url")}I`;
+	/**
+	 * The cursor of `[BOOKS, "abcdef", 0]` with the digit holding the low byte of its token's third
+	 * character replaced by standard base64's `+`: a decoder reading `+` as a digit reads a cursor
+	 * with another token, `abϣdef`.
+	 */
+	const plain = JSON.stringify([BOOKS, "abcdef", 0]);
+	const tokenDigit = Math.floor((((plain.indexOf("abcdef") + 2) * 2 + 1) * 8) / 6);
+	const foreignDigit = `${cursorOf(plain).slice(0, tokenDigit)}+${cursorOf(plain).slice(tokenDigit + 1)}`;
+
+	it("builds the two cursors a strict decoder alone refuses as it says it does", () => {
+		expect((spaced.length - 1) % 3).toBe(0);
+		// The digit replaced is one of the token's: a valid digit there instead reads another token.
+		const other = `${cursorOf(plain).slice(0, tokenDigit)}H${cursorOf(plain).slice(tokenDigit + 1)}`;
+		const read = Buffer.from(other, "base64url").swap16().toString("utf16le");
+		expect(JSON.parse(read)).toEqual([BOOKS, "absdef", 0]);
+	});
 
 	it.each([
-		["a skip below zero", cursorOf('["n2",-1]')],
-		["a skip that is not whole", cursorOf('["n2",1.5]')],
-		["a skip that is a string", cursorOf('["n2","1"]')],
-		["a skip past the safe integers", cursorOf('["n2",9007199254740992]')],
-		["a token that is not a string", cursorOf("[2,0]")],
-		["a third element", cursorOf('["n2",1,0]')],
-		["a single element", cursorOf('["n2"]')],
-		["an object", cursorOf('{"0":"n2","1":1}')],
+		["another operation's cursor", cursorAt(issuerOf("Authors_list"), "n2", 1)],
+		[
+			"this operation's under other arguments",
+			cursorAt(issuerOf("Books_list", '{"tag":"x"}'), "n2", 1),
+		],
+		["no issuer, as a cursor before 0.5.0 was", cursorOf('["n2",1]')],
+		["the operation's own name, unhashed", cursorOf('["Books_list","n2",1]')],
+		["an issuer that is not a string", cursorOf('[7,"n2",1]')],
+		["a skip below zero", cursorAt(BOOKS, "n2", -1)],
+		["a skip that is not whole", cursorAt(BOOKS, "n2", 1.5)],
+		["a skip that is a string", cursorOf(JSON.stringify([BOOKS, "n2", "1"]))],
+		["a skip past the largest first GraphQL carries, 2^31 - 1", cursorAt(BOOKS, "n2", 2 ** 31)],
+		["a skip past the safe integers", cursorAt(BOOKS, "n2", 9007199254740992)],
+		["a token that is not a string", cursorOf(JSON.stringify([BOOKS, 2, 0]))],
+		["a fourth element", cursorOf(JSON.stringify([BOOKS, "n2", 1, 0]))],
+		["a single element", cursorOf(JSON.stringify([BOOKS]))],
+		["an object", cursorOf(JSON.stringify({ 0: BOOKS, 1: "n2", 2: 1 }))],
 		["text that is no JSON", cursorOf("n2")],
 		["a digit base64url does not have (RFC 4648 §5)", foreignDigit],
 		["a last digit alone, which no base64url ends with", lastDigitAlone],
@@ -877,6 +996,110 @@ describe("a connection", () => {
 		expect(result.errors?.map((e) => e.message)).toEqual([
 			"after is not a cursor this connection issued",
 		]);
+		expect(calls).toEqual([]);
+	});
+
+	/**
+	 * **One field's list under other arguments is another connection**, as Relay counts one: a scifi
+	 * shelf's cursor is no cursor of the poetry shelf, though one operation answers both.
+	 */
+	it("refuses a cursor the same field issued under other arguments, and takes one issued under the same", async () => {
+		next["Books_list"] = three;
+		const scifi = pageOf(await run(`{ books(tag: "scifi") { ${PAGE} } }`));
+		calls = [];
+		const poetry = await run(
+			`{ books(tag: "poetry", after: "${scifi.pageInfo.endCursor ?? ""}") { nodes { id } } }`,
+		);
+		expect(poetry.errors?.map((e) => e.message)).toEqual([
+			"after is not a cursor this connection issued",
+		]);
+		expect(calls).toEqual([]);
+		const again = await run(
+			`{ books(tag: "scifi", after: "${scifi.pageInfo.endCursor ?? ""}") { nodes { id } } }`,
+		);
+		expect(again.errors).toBeUndefined();
+		expect(calls.map((c) => c.input)).toEqual([
+			{ "page-size": 20, "page-token": "n2", tag: "scifi" },
+		]);
+	});
+
+	it("asks for no page below the minimum page size, and cuts the window to first (§4.4)", async () => {
+		next["Books_list"] = three;
+		const result = await run(
+			`{ flooredBooks(first: 2) { edges { node { id } } pageInfo { hasNextPage } } }`,
+		);
+		expect(result.errors).toBeUndefined();
+		expect(calls.map((c) => c.input)).toEqual([{ "page-size": 3 }]);
+		expect(result.data?.["flooredBooks"]).toEqual({
+			edges: [{ node: { id: "c1" } }, { node: { id: "c2" } }],
+			pageInfo: { hasNextPage: true },
+		});
+	});
+
+	/**
+	 * **A cursor is unsigned, so a skip is bounded where nothing else bounds it**: with no maximum page
+	 * size, no cursor skips past the largest `first` GraphQL carries, 2^31 - 1, and no page asked for
+	 * is larger, so a forged cursor sizes no page beyond what `first` could ask.
+	 */
+	it("refuses a skip past the largest first where the page size has no maximum, and asks for no more", async () => {
+		next["Books_list"] = three;
+		const past = await run(
+			`{ unboundedBooks(first: 1, after: "${cursorAt(BOOKS, "n2", 2 ** 31)}") { nodes { id } } }`,
+		);
+		expect(past.errors?.map((e) => e.message)).toEqual([
+			"after is not a cursor this connection issued",
+		]);
+		expect(calls).toEqual([]);
+		const at = await run(
+			`{ unboundedBooks(first: 1, after: "${cursorAt(BOOKS, "n2", 2 ** 31 - 1)}") { nodes { id } } }`,
+		);
+		expect(at.errors).toBeUndefined();
+		expect(calls.map((c) => c.input)).toEqual([{ "page-size": 2 ** 31 - 1, "page-token": "n2" }]);
+	});
+
+	/**
+	 * **A skip past the maximum page size is a cursor this runtime issues**: a backend can answer a
+	 * page longer than it was asked for, and every item of it gets a cursor. Resuming from one asks
+	 * for no page past the maximum, as resuming from any other does.
+	 */
+	it("takes a skip past the maximum page size, and asks for no page past the maximum", async () => {
+		next["Books_list"] = three;
+		const result = await run(
+			`{ books(first: 1, after: "${cursorAt(BOOKS, "n2", 51)}") { nodes { id } } }`,
+		);
+		expect(result.errors).toBeUndefined();
+		expect(calls.map((c) => c.input)).toEqual([{ "page-size": 50, "page-token": "n2" }]);
+	});
+
+	it("walks a page the backend answers longer than the maximum page size, losing and repeating nothing", async () => {
+		// Eighty items in one page, whatever page size it is asked for; `@maxValue(50)` on the size.
+		const all = Array.from({ length: 80 }, (_, i) => book(`o${String(i + 1)}`, null));
+		next["Books_list"] = () => ({ status: 200, body: { items: all } });
+		const seen: string[] = [];
+		let after = "";
+		for (let page = 0; page < 10; page += 1) {
+			const result = await run(`{ books(first: 20${after}) { ${PAGE} } }`);
+			expect(result.errors).toBeUndefined();
+			const { edges, pageInfo } = pageOf(result);
+			seen.push(...edges.map((edge) => edge.node.id));
+			if (!pageInfo.hasNextPage) break;
+			after = `, after: "${pageInfo.endCursor ?? ""}"`;
+		}
+		expect(seen).toEqual(all.map((item) => item.id));
+	});
+
+	/** resolverFor's order: who may call is answered before anything of the input is read. */
+	it("answers a caller it refuses before reading a page's arguments", async () => {
+		const unauthenticated = await run(`{ books(after: "n2") { nodes { id } } }`, {
+			caller: null,
+			verdict: "unauthenticated",
+		});
+		expect(unauthenticated.errors?.map((e) => e.extensions["code"])).toEqual(["UNAUTHENTICATED"]);
+		const forbidden = await run(`{ books(first: -1) { nodes { id } } }`, {
+			caller: "alice",
+			verdict: "forbidden",
+		});
+		expect(forbidden.errors?.map((e) => e.extensions["code"])).toEqual(["FORBIDDEN"]);
 		expect(calls).toEqual([]);
 	});
 

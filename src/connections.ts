@@ -2,6 +2,8 @@ import type { ModelProperty, PagingProperty, Program, Scalar, Type } from "@type
 import {
 	getMaxValue,
 	getMaxValueExclusive,
+	getMinValue,
+	getMinValueExclusive,
 	getPagingOperation,
 	isArrayModelType,
 	isList,
@@ -152,6 +154,7 @@ export function connectionOf(
 	}
 	const item = projector.output(array.indexer.value);
 	const maximum = maximumOf(program, first.param);
+	const minimum = minimumOf(program, first.param);
 	// Only a list projects as one, and `isListOf` refused those above.
 	if (item.kind !== "named") throw new Error(`${operation.operation.name}: a list item`);
 	return {
@@ -163,6 +166,7 @@ export function connectionOf(
 			after: after.name,
 			item,
 			maximum,
+			minimum,
 			assumedSize: first.param.defaultValue === undefined ? maximum : undefined,
 		},
 	};
@@ -184,36 +188,56 @@ function isListOf(type: Type): boolean {
 }
 
 /**
- * **The largest page size the operation accepts**, `undefined` where nothing bounds it: the least of
- * each whole `@maxValue`, and each whole `@maxValueExclusive` less one, that the page size property
- * declares and that every scalar its type extends declares, as the operation's Zod schema enforces
- * them all.
+ * **The largest, or the smallest, page size the operation accepts**, `undefined` where nothing bounds
+ * it: of each whole `@maxValue`, and each whole `@maxValueExclusive` less one, the least, or of each
+ * whole `@minValue`, and each whole `@minValueExclusive` plus one, the greatest, that the page size
+ * property declares and that every scalar its type extends declares, as the operation's Zod schema
+ * enforces them all.
  *
- * It bounds a page twice. **Resuming after a cursor partway into a page**, the resolver asks the
- * backend for the items skipped as well, never past this. **Where `first` has no default**, it is
- * `@listSize(assumedSize:)`; never beside a default, which the cost specification reads as if the
- * query had sent it (§8.2), and beside which it allows no `assumedSize` (§9.2.4).
+ * The maximum bounds a page twice. **Resuming after a cursor partway into a page**, the resolver
+ * asks the backend for the items skipped as well, never past it. **Where `first` has no default**,
+ * it is `@listSize(assumedSize:)`; never beside a default, which the cost specification reads as if
+ * the query had sent it (§8.2), and beside which it allows no `assumedSize` (§9.2.4). **The minimum
+ * bounds the page a `first: 0` asks for**, which no operation declaring one would accept as `0`.
  */
 function maximumOf(program: Program, pageSize: ModelProperty): number | undefined {
-	const bounds: number[] = [];
-	const read = (target: ModelProperty | Scalar): void => {
+	const bounds = boundsOf(pageSize, (target) => {
 		const inclusive = getMaxValue(program, target);
-		if (inclusive !== undefined) bounds.push(inclusive);
 		const exclusive = getMaxValueExclusive(program, target);
-		if (exclusive !== undefined) bounds.push(exclusive - 1);
-	};
-	read(pageSize);
+		// An absent bound is NaN, which `boundsOf` drops as it drops an infinity.
+		return [Math.floor(inclusive ?? Number.NaN), Math.ceil(exclusive ?? Number.NaN) - 1];
+	});
+	return bounds.length === 0 ? undefined : Math.min(...bounds);
+}
+
+function minimumOf(program: Program, pageSize: ModelProperty): number | undefined {
+	const bounds = boundsOf(pageSize, (target) => {
+		const inclusive = getMinValue(program, target);
+		const exclusive = getMinValueExclusive(program, target);
+		return [Math.ceil(inclusive ?? Number.NaN), Math.floor(exclusive ?? Number.NaN) + 1];
+	});
+	return bounds.length === 0 ? undefined : Math.max(...bounds);
+}
+
+/**
+ * Every bound `read` finds on the page size property and on each scalar its type extends, as a whole
+ * number of items: a page holds a whole number, so a fractional bound on a `float64` page size is the
+ * whole bound within it, `@maxValue(10.5)` ten items and `@minValue(2.5)` three, as `read` rounds
+ * it. A bound no safe integer states, an infinity, bounds nothing.
+ */
+function boundsOf(
+	pageSize: ModelProperty,
+	read: (target: ModelProperty | Scalar) => readonly (number | undefined)[],
+): number[] {
+	const targets: (ModelProperty | Scalar)[] = [pageSize];
 	for (
 		let scalar: Scalar | undefined = pageSize.type.kind === "Scalar" ? pageSize.type : undefined;
 		scalar !== undefined;
 		scalar = scalar.baseScalar
 	) {
-		read(scalar);
+		targets.push(scalar);
 	}
-	// A page holds a whole number of items, so a fraction bounds nothing: `@listSize(assumedSize:)`
-	// is an `Int`, and a fractional maximum on a `float64` page size states no count.
-	const whole = bounds.filter((bound) => Number.isSafeInteger(bound));
-	return whole.length === 0 ? undefined : Math.min(...whole);
+	return targets.flatMap(read).filter((bound): bound is number => Number.isSafeInteger(bound));
 }
 
 function field(name: string, type: TypeRef, description: string): OutputFieldPlan {

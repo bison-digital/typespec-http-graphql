@@ -428,30 +428,6 @@
 		{
 			"file": "src/connections.ts",
 			"mutator": "ConditionalExpression",
-			"original": "exclusive !== undefined",
-			"replacement": "true",
-			"line": "if (exclusive !== undefined) bounds.push(exclusive - 1);",
-			"reason": "Pushes `undefined - 1`, `NaN`, where no @maxValueExclusive is stated: filtered out by `Number.isSafeInteger` before the least bound is taken, so the maximum is unchanged."
-		},
-		{
-			"file": "src/connections.ts",
-			"mutator": "ConditionalExpression",
-			"original": "inclusive !== undefined",
-			"replacement": "true",
-			"line": "if (inclusive !== undefined) bounds.push(inclusive);",
-			"reason": "Pushes `undefined` where no @maxValue is stated: filtered out by `Number.isSafeInteger` before the least bound is taken, so the maximum is unchanged."
-		},
-		{
-			"file": "src/connections.ts",
-			"mutator": "ArrayDeclaration",
-			"original": "[]",
-			"replacement": "[\"Stryker was here\"]",
-			"line": "const bounds: number[] = [];",
-			"reason": "Starts the bounds with a string: the maximum is the least of the bounds that are safe integers (`bounds.filter((bound) => Number.isSafeInteger(bound))`, below), so the string is filtered out and the maximum is unchanged."
-		},
-		{
-			"file": "src/connections.ts",
-			"mutator": "ConditionalExpression",
 			"original": "pageSize.type.kind === \"Scalar\"",
 			"replacement": "true",
 			"line": "let scalar: Scalar | undefined = pageSize.type.kind === \"Scalar\" ? pageSize.type : undefined;",
@@ -624,6 +600,22 @@
 			"replacement": "\"\"",
 			"line": "const TYPENAME_TYPE: TypeRef = named(\"String\", true);",
 			"reason": "Every `__typename` node shares this one type, so changing it changes all of them alike: no two can differ in shape, and none is ever aliased."
+		},
+		{
+			"file": "src/lists.ts",
+			"mutator": "ConditionalExpression",
+			"original": "only.kind !== \"Model\"",
+			"replacement": "false",
+			"line": "if (only.kind !== \"Model\" || !isArrayModelType(only)) return undefined;",
+			"reason": "`isArrayModelType` reads the type's indexer, which only a model has, so a scalar, union, enum or literal is no array with the kind check or without it. The check is the narrowing the compiler's signature asks for: it takes a `Model`."
+		},
+		{
+			"file": "src/runtime.ts",
+			"mutator": "StringLiteral",
+			"original": "\"0\"",
+			"replacement": "\"\"",
+			"line": "return hash.toString(16).padStart(8, \"0\");",
+			"reason": "The issuer is compared only with an issuer this runtime wrote by the same function, never read back as a number or shown, so an unpadded digest tells two connections apart exactly as the padded one does. A cursor a test spells by hand pads as the published FNV-1a vectors do, but a mutant changing both sides alike cannot be told apart."
 		}
 	]
 }

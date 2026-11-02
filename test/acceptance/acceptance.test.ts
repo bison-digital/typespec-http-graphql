@@ -638,6 +638,33 @@ describe("connections", () => {
 	});
 });
 
+/**
+ * **A link's list under another parent is another connection**: a cursor names the value bound from
+ * the parent, so one book's editions' cursor is refused by another book's, before any call, and
+ * taken by its own.
+ */
+describe("a link's cursor", () => {
+	const editions = (bookId: string, after = "") =>
+		`{ book(bookId: "${bookId}") { editions(first: 1, xApiVersion: "2026-10-01"${after}) { nodes { id } pageInfo { endCursor } } } }`;
+	const endCursorOf = (result: GraphQLResult): string => {
+		const data = result.data as { book: { editions: { pageInfo: { endCursor: string } } } };
+		return data.book.editions.pageInfo.endCursor;
+	};
+
+	it("is refused under another parent, and taken under its own", async () => {
+		const cursor = endCursorOf(await query(editions(NOVEL)));
+		log.clear();
+		const other = await query(editions(NO_AUTHOR, `, after: "${cursor}"`));
+		expect(codesOf(other)).toEqual(["BAD_USER_INPUT"]);
+		expect(log.count("BookEditions_list")).toBe(0);
+		const own = await query(editions(NOVEL, `, after: "${cursor}"`));
+		expect(own.errors).toBeUndefined();
+		expect(own.data).toEqual({
+			book: { editions: { nodes: [{ id: EPUB }], pageInfo: { endCursor: expect.any(String) } } },
+		});
+	});
+});
+
 /** The GraphQL names are camelCase, and the wire is untouched both ways. */
 describe("wire names that are not GraphQL style", () => {
 	it("hands a required header argument to the handler under its wire name", async () => {

@@ -18,6 +18,12 @@ model Edition {
   id: string;
 }
 
+/** A page size floored by its scalar, above a base that floors it more, above `int32`. */
+@minValue(3)
+scalar FloorPage extends BasePage;
+@minValue(6)
+scalar BasePage extends int32;
+
 /** A page size bounded by its scalar, below a base that bounds it less, below `int32`. */
 @maxValue(40)
 scalar SmallPage extends WidePage;
@@ -117,6 +123,30 @@ interface Books {
   ): Page<Book>;
   @list @get @route("/fractional") fractional(
     @query @pageSize @maxValue(10.5) limit?: float64,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/least") least(
+    @query @pageSize @minValue(1) @maxValue(100) limit?: int32 = 10,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/least-exclusive") leastExclusive(
+    @query @pageSize @minValueExclusive(4) limit?: int32,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/floored") floored(
+    @query @pageSize limit?: FloorPage,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/fractional-floor") fractionalFloor(
+    @query @pageSize @minValue(0.5) limit?: float64,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/fractional-floor-exclusive") fractionalFloorExclusive(
+    @query @pageSize @minValueExclusive(2.5) limit?: float64,
+    @query @continuationToken cursor?: string,
+  ): Page<Book>;
+  @list @get @route("/fractional-exclusive") fractionalExclusive(
+    @query @pageSize @maxValueExclusive(10.5) limit?: float64,
     @query @continuationToken cursor?: string,
   ): Page<Book>;
 }

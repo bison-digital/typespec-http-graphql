@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type GraphQLSchema, parse } from "graphql";
@@ -83,5 +84,55 @@ describe("operationCost over an emitted schema", () => {
 		const document = `mutation { createBook(input: { originalLanguage: "en" }) {
 			... on Book { author { name } } ... on ConflictProblem { title } } }`;
 		expect(costOf(idiom, document)).toBe(3);
+	});
+});
+
+/**
+ * **A list bounded by `@maxItems` is `@listSize(assumedSize:)`**, so Type Cost counts its items
+ * rather than assuming it infinite (cost specification §8.1); a list nothing bounds stays infinite,
+ * as §8 requires. Over `lists.tsp`, Type Cost worked by hand: Query 1, the book 1, each `Tag` 1.
+ */
+describe("typeCost over an emitted list bounded by @maxItems", () => {
+	let schema: GraphQLSchema;
+	let sdl: string;
+
+	beforeAll(async () => {
+		const here = fileURLToPath(new URL(".", import.meta.url));
+		const compiled = await compileFixture(here, "lists", { outDir: join(here, ".out", "lists") });
+		sdl = readFileSync(join(compiled.outDir, "schema.graphql"), "utf8");
+		const module = (await import(join(compiled.outDir, "graphql.gen.ts"))) as {
+			readonly createSchema: (handlersFor: () => object, deps: object) => GraphQLSchema;
+		};
+		schema = module.createSchema(() => ({}), { authorize: () => "allow", context: () => ({}) });
+	}, 300_000);
+
+	const costOf = (document: string): number => typeCost({ schema, document: parse(document) });
+
+	it("states a property's bound, and its array type's, and none for a list nothing bounds", () => {
+		const fields = sdl.slice(
+			sdl.indexOf("type Book {"),
+			sdl.indexOf("}", sdl.indexOf("type Book {")),
+		);
+		expect(fields).toContain("tags: [Tag!]! @listSize(assumedSize: 10)");
+		expect(fields).toContain("shelves: [Tag!] @listSize(assumedSize: 3)");
+		expect(fields).toContain("notes: [Tag!]!\n");
+		expect(fields).toContain("labels: [String!]! @listSize(assumedSize: 5)");
+	});
+
+	it("counts a bounded list's items, and assumes an unbounded one infinite", () => {
+		expect(costOf(`{ book(bookId: "b") { id title } }`)).toBe(2);
+		expect(costOf(`{ book(bookId: "b") { tags { label } } }`)).toBe(2 + 10);
+		expect(costOf(`{ book(bookId: "b") { shelves { label } } }`)).toBe(2 + 3);
+		expect(costOf(`{ book(bookId: "b") { labels } }`)).toBe(2);
+		expect(costOf(`{ book(bookId: "b") { notes { label } } }`)).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	it("lets typeCostLimit admit a read of the bounded lists, and refuse the unbounded one", () => {
+		const limit = typeCostLimit(100);
+		const verdicts = [
+			`{ book(bookId: "b") { tags { label } shelves { label } labels } }`,
+			`{ book(bookId: "b") { notes { label } } }`,
+		].map((document) => limit({ schema, document: parse(document) }));
+		expect(verdicts.map((verdict) => verdict === undefined)).toEqual([true, false]);
 	});
 });

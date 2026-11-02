@@ -27,6 +27,7 @@ export default {
 		"src/inputs.ts",
 		"src/types.ts",
 		"src/requests.ts",
+		"src/lists.ts",
 	],
 	coverageAnalysis: "perTest",
 	/**

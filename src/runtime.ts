@@ -194,6 +194,8 @@ export interface CallRuntime {
 				readonly after: string;
 				/** The largest page size the operation accepts, where one is stated. */
 				readonly maximum?: number;
+				/** The smallest page size the operation accepts, where one is stated. */
+				readonly minimum?: number;
 		  }
 		| undefined;
 	/** Where the call is a batch read: the bound key one call fills with every value, and its answer. */
@@ -1347,6 +1349,8 @@ function canonical(value: unknown): string {
 interface PagePosition {
 	/** The connection's plan: the keys of the handler's input and of its page that it reads. */
 	readonly connection: NonNullable<CallRuntime["connection"]>;
+	/** Which connection the page is of: `issuerOf` the operation and its other input. */
+	readonly issuer: string;
 	readonly token: string | null;
 	readonly skip: number;
 	/** The client's `first`, when it gave one: Relay §4.4 slices the edges to it. */
@@ -1360,18 +1364,51 @@ function isSafeInteger(value: unknown): value is number {
 	return Number.isSafeInteger(value);
 }
 
-/**
- * A cursor: `[token, skip]` as JSON, each UTF-16 code unit as two bytes, base64url. Written out here
- * rather than with `btoa` or `TextEncoder`, so the runtime copy needs no global a consumer's `lib`
- * might not declare. Opaque, as Relay §3.1 asks a client to treat it.
- */
-function encodeCursor(token: string | null, skip: number): string {
-	const text = JSON.stringify([token, skip]);
+/** The largest `Int` GraphQL serialises (spec 3.5.1), and so the largest `first` a client can ask. */
+const INT_MAX = 2 ** 31 - 1;
+
+/** Each UTF-16 code unit of `text` as two bytes, big-endian. */
+function unitBytes(text: string): number[] {
 	const bytes: number[] = [];
 	for (let index = 0; index < text.length; index += 1) {
 		const unit = text.charCodeAt(index);
 		bytes.push(unit >> 8, unit & 0xff);
 	}
+	return bytes;
+}
+
+/**
+ * **Which connection a cursor counts the pages of**: the operation, and every other value of its
+ * input, `first` and `after` aside, so one field's list under other arguments, or under another
+ * parent, is another connection, as Relay counts one. A 32-bit FNV-1a digest, as eight hex digits,
+ * of `operationId`, NUL and `canonical` of that input, each UTF-16 code unit as two bytes. A digest,
+ * not a signature: it tells a cursor of another connection apart, which is all Relay asks.
+ */
+function issuerOf(
+	operationId: string,
+	input: Readonly<Record<string, unknown>>,
+	connection: NonNullable<CallRuntime["connection"]>,
+): string {
+	const { [connection.first]: _first, [connection.after]: _after, ...rest } = input;
+	let hash = 0x811c9dc5;
+	for (const byte of unitBytes(`${operationId}\u0000${canonical(rest)}`)) {
+		hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+	}
+	return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * A cursor: `[issuer, token, skip]` as JSON, each UTF-16 code unit as two bytes, base64url. Written
+ * out here rather than with `btoa` or `TextEncoder`, so the runtime copy needs no global a
+ * consumer's `lib` might not declare. Opaque, as Relay §3.1 asks a client to treat it.
+ *
+ * **It names the connection whose pages it counts**, `issuerOf` its operation and arguments, so
+ * `after` refuses a cursor another connection issued, another field's or this one's under other
+ * arguments, rather than hand its handler another list's token. Not signed: a backend still
+ * validates the token it is handed, as it would one a REST client sent.
+ */
+function encodeCursor(issuer: string, token: string | null, skip: number): string {
+	const bytes = unitBytes(JSON.stringify([issuer, token, skip]));
 	let cursor = "";
 	for (let index = 0; index < bytes.length; index += 3) {
 		const [a = 0, b = 0, c = 0] = bytes.slice(index, index + 3);
@@ -1384,9 +1421,19 @@ function encodeCursor(token: string | null, skip: number): string {
 	return cursor;
 }
 
-/** The position a cursor this runtime issued names, or `undefined` for anything else. */
+/**
+ * The position a cursor this runtime issued for `issuer`'s connection names, or `undefined` for
+ * anything else: a backend's own token, a cursor of another connection's pages, a skip past 2^31 - 1,
+ * or no cursor at all.
+ *
+ * **A skip is bounded by the largest `first` GraphQL carries, not by the page size's maximum.** A
+ * cursor's skip counts items of a page the backend answered, and a backend can answer a page longer
+ * than it was asked for, so a cursor this runtime issued can skip past the maximum; where there is
+ * one, `pagePositionOf` already asks for no page past it, whatever the skip.
+ */
 function decodeCursor(
 	cursor: string,
+	issuer: string,
 ): { readonly token: string | null; readonly skip: number } | undefined {
 	const bytes: number[] = [];
 	for (let index = 0; index < cursor.length; index += 4) {
@@ -1412,10 +1459,11 @@ function decodeCursor(
 	} catch {
 		return undefined;
 	}
-	if (!Array.isArray(parsed) || parsed.length !== 2) return undefined;
-	const [token, skip] = parsed as [unknown, unknown];
+	if (!Array.isArray(parsed) || parsed.length !== 3) return undefined;
+	const [named, token, skip] = parsed as [unknown, unknown, unknown];
+	if (named !== issuer) return undefined;
 	if (token !== null && typeof token !== "string") return undefined;
-	if (!isSafeInteger(skip) || skip < 0) return undefined;
+	if (!isSafeInteger(skip) || skip < 0 || skip > INT_MAX) return undefined;
 	return { token, skip };
 }
 
@@ -1449,12 +1497,13 @@ function connectionOf(
 	const window = items.slice(position.skip);
 	const sliced = window.slice(0, position.first);
 	const cut = sliced.length < window.length;
+	const cursor = (token: string | null, skip: number) => encodeCursor(position.issuer, token, skip);
 	const edges = sliced.map((node, index) => ({
 		node,
 		cursor:
 			index === sliced.length - 1 && !cut && next !== null
-				? encodeCursor(next, 0)
-				: encodeCursor(position.token, position.skip + index + 1),
+				? cursor(next, 0)
+				: cursor(position.token, position.skip + index + 1),
 	}));
 	const last = edges[edges.length - 1];
 	return {
@@ -1466,11 +1515,7 @@ function connectionOf(
 			startCursor: edges[0]?.cursor ?? null,
 			endCursor:
 				last?.cursor ??
-				(cut
-					? encodeCursor(position.token, position.skip)
-					: next === null
-						? null
-						: encodeCursor(next, 0)),
+				(cut ? cursor(position.token, position.skip) : next === null ? null : cursor(next, 0)),
 		},
 	};
 }
@@ -1478,9 +1523,10 @@ function connectionOf(
 /**
  * The page a connection field's arguments name, with the handler's input set to ask the backend for
  * it: `after` decoded into the page's token, refused as `BAD_USER_INPUT` when it is no cursor this
- * connection issued; a negative `first` refused as Relay §4.4 requires; and, resuming partway into a
+ * connection issued; a negative `first` refused as Relay §4.4 requires; resuming partway into a
  * page, the page size raised by the items skipped, up to the operation's maximum, so the window holds
- * `first` items where the maximum allows.
+ * `first` items where the maximum allows; for `first: 0`, the smallest page that shows whether an
+ * edge follows; and never a size below the operation's minimum.
  * `undefined` for a call that is no connection.
  */
 function pagePositionOf(
@@ -1503,9 +1549,10 @@ function pagePositionOf(
 			],
 		});
 	}
+	const issuer = issuerOf(call.operationId, input, connection);
 	const cursor = input[connection.after];
-	if (typeof cursor !== "string") return { connection, token: null, skip: 0, first };
-	const decoded = decodeCursor(cursor);
+	const decoded =
+		typeof cursor === "string" ? decodeCursor(cursor, issuer) : { token: null, skip: 0 };
 	if (decoded === undefined) {
 		throw coded("BAD_USER_INPUT", "after is not a cursor this connection issued", {
 			issues: [
@@ -1526,15 +1573,29 @@ function pagePositionOf(
 	 * too, **but never more than the operation accepts**: past its maximum the window is shorter than
 	 * `first`, which Relay allows, and the last edge's cursor goes on from where it ends. A `first`
 	 * beyond the maximum on its own is sent as it is, for the operation's schema to refuse by name.
+	 *
+	 * **`first: 0` asks for one item past those skipped**, the least that tells whether an edge
+	 * follows (Relay §5.1's `hasNextPage`); the window is then cut to none.
+	 *
+	 * **No page is asked for below the operation's minimum page size**, `first: 0` or `first: 2`
+	 * beneath a minimum of five alike, so a handler never receives a size its operation refuses; the
+	 * window is cut to `first` all the same, which Relay §4.4 asks.
+	 *
+	 * **A cursor is unsigned, so its skip sizes the page only within a bound**: the maximum, where the
+	 * operation has one, and otherwise 2^31 - 1, the largest `first` GraphQL carries. Without a
+	 * maximum, a forged skip can still ask for a page that large, which no cost limit counts.
 	 */
 	if (first !== undefined) {
-		const wanted = first + decoded.skip;
+		const wanted = Math.max(
+			first === 0 ? decoded.skip + 1 : first + decoded.skip,
+			connection.minimum ?? 0,
+		);
 		input[connection.first] =
 			connection.maximum === undefined
-				? wanted
+				? Math.min(wanted, INT_MAX)
 				: Math.min(wanted, Math.max(first, connection.maximum));
 	}
-	return { connection, token: decoded.token, skip: decoded.skip, first };
+	return { connection, issuer, token: decoded.token, skip: decoded.skip, first };
 }
 
 /** The value of a declared response header, where the arm declares it and the handler set it. */
@@ -1983,7 +2044,15 @@ export function resolverFor<X extends object, C>(
 		info: GraphQLResolveInfo,
 	): Promise<unknown> => {
 		const input = { ...argumentsToWire(call, args, info, rules), ...bound, ...call.supplied };
-		const position = pagePositionOf(call, args, input);
+		let position: PagePosition | undefined;
+		try {
+			position = pagePositionOf(call, args, input);
+		} catch (refused) {
+			// Who may call is answered before anything of the input is, a page's arguments included.
+			return admitted(call, deps, context).then(() => {
+				throw refused;
+			});
+		}
 		// The memo is keyed on the context value: any object, a function included.
 		const keyed =
 			(typeof context === "object" || typeof context === "function") && context !== null;

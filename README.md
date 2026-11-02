@@ -30,9 +30,9 @@ pnpm add graphql zod
 Install the three `@typespec` packages at one version, 1.15 or later. `graphql` 17 and `zod` (4.5 or
 later) are peers: the emitted code imports them, so your application owns them. graphql 16 is not
 supported: it offers only the scalar API graphql 17 deprecates, and nothing deprecated ships here.
-Serve the schema with GraphQL Yoga on `@graphql-tools/utils` 12.1.0 or later, which
-`@graphql-tools/executor` 2.0.5 requires: an earlier one hands a resolver an enum default's name
-rather than its value
+The server below is written for GraphQL Yoga 6: its `requestId` option is new in 6. Serve the
+schema on `@graphql-tools/utils` 12.1.0 or later, which `@graphql-tools/executor` 2.0.5 requires:
+an earlier one hands a resolver an enum default's name rather than its value
 ([ardatan/graphql-tools#8511](https://github.com/ardatan/graphql-tools/issues/8511)).
 
 ```yaml
@@ -100,6 +100,12 @@ using Bookshop;
   its own: `@@queryField(Products.read, "product", #{ description: "One product, or null." })`, and
   `@link`'s after its parameters. An operation's doc is written for REST, and may name a 404 a
   GraphQL client never sees or a query string it cannot send.
+- **A field's `weight` is the calls one call of it makes**, where its handler calls more than one
+  backend: `@@queryField(Books.read, "book", #{ weight: "2" })`, and `@link`'s and
+  `@mutationField`'s alike. It multiplies the weight the field is given for the calls it makes (see
+  [Cost](#cost-and-calls-per-request)), so `costLimit` counts every call a document makes. It is a
+  number written as GraphQL writes a Float, as `@cost(weight:)` takes one, and at least 0, which is
+  this package's own rule, since a field costs nothing less than nothing; `"1"` unless stated.
 - **They only record.** Every check runs when this emitter runs, so a mistake here never stops
   another emitter. A failed check drops that one declaration with a warning; see
   [Diagnostics](#diagnostics).
@@ -216,6 +222,9 @@ export const yoga = createYoga<ServerContext, { readonly caller: Caller | null }
 	schema,
 	// Once per request, and asynchronous, so the check can await WebCrypto.
 	context: async ({ c }) => ({ caller: await verify(c.req.header("authorization")) }),
+	// Yoga answers each request with an `x-request-id`: the one Hono's `requestId()` middleware set,
+	// so `/graphql` answers with the id the rest of the app logs.
+	requestId: { trustHeader: false, generateRequestId: ({ context }) => context.c.get("requestId") },
 	plugins: [limits],
 });
 ```
@@ -225,9 +234,11 @@ export const yoga = createYoga<ServerContext, { readonly caller: Caller | null }
 ```ts
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { requestId } from "hono/request-id";
 import { yoga } from "./graphql.js";
 
 const app = new Hono();
+app.use(requestId());
 app.on(["GET", "POST"], "/graphql", async (c) => {
 	const response = await yoga.fetch(c.req.raw, { c });
 	// Through Hono's context, so headers earlier middleware set with `c.header()` are kept.
@@ -241,9 +252,11 @@ serve({ fetch: app.fetch, port: 3000 });
 
 ```ts
 import { Hono } from "hono";
+import { requestId } from "hono/request-id";
 import { yoga } from "./graphql.js";
 
 const app = new Hono();
+app.use(requestId());
 app.on(["GET", "POST"], "/graphql", async (c) => {
 	const response = await yoga.fetch(c.req.raw, { c });
 	// Through Hono's context, so headers earlier middleware set with `c.header()` are kept.
@@ -254,9 +267,62 @@ export default app;
 ```
 
 **Answer through `c.newResponse`, not with Yoga's `Response` as it is.** Hono applies the headers
-middleware set with `c.header()` before the handler, such as a request id, only to a response built
-through the context, so returning `yoga.fetch`'s own drops them from `/graphql` alone. `newResponse`
-keeps Yoga's status, body and headers, its own winning a name both set.
+middleware set with `c.header()` before the handler only to a response built through the context, so
+returning `yoga.fetch`'s own drops them from `/graphql` alone. `newResponse` keeps Yoga's status, body
+and headers, its own winning a name both set.
+
+**Yoga 6 sets `x-request-id` on every answer**, and by default takes it from the request's own
+header. Without the server's `requestId` option above, an id your middleware minted, for a request
+that sent none, never reaches a `/graphql` answer, and Yoga logs the request under an id the rest
+of the app does not. With it, `generateRequestId` reads the id Hono's `requestId()` set, and
+`trustHeader: false` leaves which id that is to the middleware: Hono's keeps a caller's
+`X-Request-Id` where it has one, and mints one otherwise. `requestId: false` turns Yoga's off.
+
+**With Yoga's execution cancellation on Node**, `useExecutionCancellation()` among the server's
+plugins, so no further handler call is made once its client goes away, the Node mount needs two more
+things. `@hono/node-server` aborts a request's signal with a plain string, where the DOM aborts with
+an `AbortError`, so Yoga logs each client that leaves as an error and answers 500. Hand Yoga the
+request aborted as the DOM aborts one; Yoga then rejects with that `AbortError`, which Hono's own
+error handler logs and answers 500, so answer it in `app.onError`:
+
+```ts
+// node-cancellation.ts
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { requestId } from "hono/request-id";
+import { yoga } from "./graphql.js";
+
+/** The request, its signal aborted as the DOM aborts one: with an `AbortError`. */
+const abortedAsTheDomAborts = (request: Request): Request => {
+	const controller = new AbortController();
+	if (request.signal.aborted) controller.abort();
+	else request.signal.addEventListener("abort", () => controller.abort(), { once: true });
+	return new Request(request, { signal: controller.signal });
+};
+
+const app = new Hono();
+app.use(requestId());
+app.on(["GET", "POST"], "/graphql", async (c) => {
+	const response = await yoga.fetch(abortedAsTheDomAborts(c.req.raw), { c });
+	return c.newResponse(response.body, response);
+});
+app.onError((error, c) => {
+	// A client that went away: nobody reads the answer, and nothing went wrong.
+	if (error instanceof DOMException && error.name === "AbortError") {
+		return new Response(null, { status: 499 });
+	}
+	// As Hono's own handler answers one, keeping the headers middleware set, `X-Request-Id` among them.
+	if (error instanceof HTTPException) {
+		const response = error.getResponse();
+		return c.newResponse(response.body, response);
+	}
+	console.error(error);
+	return c.text("Internal Server Error", 500);
+});
+
+serve({ fetch: app.fetch, port: 3000 });
+```
 
 No `nodejs_compat` flag is needed: the emitted code and its runtime import no Node builtin. The test
 suite serves `graphql.ts`, as written here, on workerd without one and on Node through
@@ -441,6 +507,14 @@ of a create mutation's answer with it.
 - Types are PascalCase with the namespace stripped; fields and arguments are camelCase of the
   property's JSON wire name, so a field reads the same in REST and GraphQL; enum values are
   CONSTANT_CASE. Root field and link names are used as `graphql.tsp` writes them.
+- **An input type is its model's name with `Input`**, `AuthorInput` for `Author`, and a model
+  already named so keeps its name, as `@typespec/graphql` names it: `AuthorInput` is `AuthorInput`,
+  not `AuthorInputInput`. Where that model is also an output type, the output owns the name and the
+  input type keeps the suffix; so does each, where two input types are planned from one model. A
+  type another model already names `AuthorInputInput` is a `graphql-name-collision` with it, as
+  every name two types take is. **So the name moves when the model becomes an output**: an operation
+  that later answers `AuthorInput` renames its input type `AuthorInputInput`, which a client naming
+  the type in a variable definition has to follow. A model named for input stays input-only.
 - **Fields several types share are an interface.** A named model two or more output types are built
   from, by `extends` or a spread, is `<Name>Interface`, implemented by each of them: select
   `... on ProblemFieldsInterface { title detail }` across a result's members. Use a named model, not
@@ -622,8 +696,25 @@ warning `not-a-connection`.
 
 - `first: Int` fills the `@pageSize` parameter, whose default and maximum stay the operation's; a
   negative `first` is `BAD_USER_INPUT`, and a page the backend answers longer than `first` is cut to it.
+- `first: 0` answers no edge and says whether one follows: the handler is asked for one item past
+  where the page begins, and `endCursor` resumes where the page began.
+- **No handler is asked for a page below the smallest page size the operation accepts**, for
+  `first: 0` or for a `first` beneath it: it is asked for that smallest page, and the edges are cut
+  to `first`. The smallest is the greatest `@minValue`, or `@minValueExclusive` plus one, of the
+  page size and the scalars it extends, rounded up to a whole number.
 - `after: String` takes a cursor from this connection, an edge's or `pageInfo.endCursor`, and the
-  handler receives the backend's own token for that page. Anything else is `BAD_USER_INPUT`.
+  handler receives the backend's own token for that page. Anything else is `BAD_USER_INPUT`, a raw
+  backend token or a cursor another connection issued. **A connection is its field's operation and
+  every other argument and bound value**, as Relay counts one, so a cursor of `books(tag: "scifi")`
+  is refused by `books(tag: "poetry")`, and one under one author's books by another author's. A
+  cursor names its connection by a digest, and is not signed: the backend still checks the token it
+  receives.
+- **A cursor asks for no page past the largest the operation accepts**: its page size's maximum, or
+  2^31 - 1, the largest `first`, where it states none; a skip past 2^31 - 1 is `BAD_USER_INPUT`. A
+  cursor is not signed, so without an `@maxValue` on the page size a forged one can ask for a page of
+  2^31 - 1 items, which a cost limit does not count: bound every page size a client can reach.
+- Who may call is answered first: a refused caller hears `UNAUTHENTICATED` or `FORBIDDEN`, never
+  what is wrong with its paging arguments.
 - **Any `first` the schema accepts follows any cursor.** Resuming after an edge partway into a
   page, the handler is asked for that page again with the skipped items added to `first`, up to the
   largest page size the operation accepts: the least `@maxValue`, or `@maxValueExclusive` less one,
@@ -637,20 +728,26 @@ warning `not-a-connection`.
 
 ### Cost, and calls per request
 
-- `@cost(weight: "1")` is on every root field and link, and `@listSize` on every connection field,
+- `@cost(weight:)` is on every root field and link, `"1"` unless its `weight` says otherwise, and
+  `@listSize` on every connection field,
   in `schema.graphql` (the IBM cost directives) and in each field's `extensions` (`cost`, `listSize`),
   so a validation rule can read them from the runtime schema. A link bound to a list is weighed at
   its list's `@maxItems`, the calls it can make (see [Links](#links)). A batched link is weighed at
   the calls its own values can take, at the batch parameter's `@maxItems` to a call, and one more for
   each value where the batch can answer 404, since each is then sent again alone; Field Cost is
   counted per field, so it never weighs less than the link it replaces. A link chosen by a kind is
-  weighed as its costliest arm.
+  weighed as its costliest arm. A field's `weight` multiplies each of these.
+- **A list bounded by `@maxItems` is `@listSize(assumedSize:)`** at that bound, its own or its array
+  type's, so Type Cost counts its items. The bound holds: every answer is parsed by its arm's schema,
+  which refuses a longer list. An interface's field states the bound where every implementer's
+  field states the same one. A list of lists states its outer bound only: `@listSize` has one size,
+  so an inner list stays unbounded to Type Cost whatever its `@maxItems`.
 - A connection is sized by `first`, or by `first`'s default where a query sends none. Where `first`
   has no default, `assumedSize` is that largest page size; the specification allows it nowhere else
   (§9.2.4).
 - **Two costs, bounding two things**, both by the specification's static analysis:
   - `operationCost(request)` is an operation's Field Cost (§5.3.2.2): the fields it resolves, and so,
-    with `@cost(weight: "1")` on each, the handler calls it can make. `costLimit(maximum)` refuses an
+    with each field's `@cost(weight:)`, the handler calls it can make. `costLimit(maximum)` refuses an
     operation that costs more, as `COST_LIMIT_EXCEEDED`.
   - `typeCost(request)` is its Type Cost (§5.3.2.1): the objects its response can hold, each at its
     type's weight, 1 by default, the root included. `typeCostLimit(maximum)` refuses one that costs
@@ -663,7 +760,10 @@ warning `not-a-connection`.
   returns. A Field Cost limit set by measuring one path does not hold for the other; hold a document
   to both limits.
 - A list with no `@listSize` below which anything is costed has no bound, as the specification
-  requires, and is refused whatever the limit.
+  requires, and is refused whatever the limit. **So `typeCostLimit` needs every list of objects a
+  document can select bounded**: a model's list, a problem's list of field errors among them, needs
+  its `@maxItems`, and none may be a list inside another list, or a document selecting it is
+  refused.
 - `depthLimit(maximum)` and `aliasLimit(maximum)` are validation rules, answering
   `DEPTH_LIMIT_EXCEEDED` and `ALIAS_LIMIT_EXCEEDED`. A fragment adds no depth, and introspection is
   not counted; a fragment's aliases count once for every place it is spread.
@@ -698,6 +798,7 @@ many services meet it.
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
 | `no-fields-declared`       | a service has no declaration in `graphql.tsp`; nothing is written for it                                                                                        | none                                |
 | `invalid-graphql-name`     | a name is not a GraphQL name: `/^[_A-Za-z][_0-9A-Za-z]*$/`, not starting `__`                                                                                   | dropped                             |
+| `invalid-weight`           | a field's `weight` is no number at least 0 written as GraphQL writes a Float                                                                                    | dropped                             |
 | `graphql-name-collision`   | two root fields of one root type, or a link and a field of its type, share a name                                                                               | every party dropped                 |
 | `declared-twice`           | an operation is declared as a root field more than once                                                                                                         | all but the first dropped           |
 | `unknown-link-parameter`   | a key of `@link`'s `parameters` is not a parameter of the operation                                                                                             | dropped                             |

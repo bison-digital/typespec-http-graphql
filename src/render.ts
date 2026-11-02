@@ -120,6 +120,7 @@ function callLiteral(call: CallPlan, args: readonly ArgumentPlan[], indent: stri
 					first: call.connection.first,
 					after: call.connection.after,
 					...(call.connection.maximum === undefined ? {} : { maximum: call.connection.maximum }),
+					...(call.connection.minimum === undefined ? {} : { minimum: call.connection.minimum }),
 				});
 	return block(
 		[
@@ -348,14 +349,16 @@ function typeEntry(def: TypeDef, uses: Uses, indent: string): string {
 				uses.runtimeValues.add("baseTypeOf");
 				resolve.push(`resolveType: baseTypeOf(${baseRuleOf(def.resolveBy.rule)})`);
 			}
-			const fields = def.fields.map(
-				(field) =>
-					`${objectKey(field.name)}: ${inline([
-						`type: ${typeExpression(field.type, uses)}`,
-						...describe(field.description),
-						...deprecate(field.deprecationReason),
-					])}`,
-			);
+			// An interface's field calls nothing; its list bound is repeated, as an object field's is.
+			const fields = def.fields.map((field) => {
+				const extensions = field.directives.map((d) => `${d.name}: ${JSON.stringify(d.arguments)}`);
+				return `${objectKey(field.name)}: ${inline([
+					`type: ${typeExpression(field.type, uses)}`,
+					...describe(field.description),
+					...deprecate(field.deprecationReason),
+					...(extensions.length > 0 ? [`extensions: ${inline(extensions)}`] : []),
+				])}`;
+			});
 			return `${def.name}: new GraphQLInterfaceType(${block(
 				[
 					`name: ${name}`,

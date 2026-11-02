@@ -14,6 +14,7 @@ import { $lib, GraphQLKeys, PACKAGE_NAME } from "../src/lib.js";
 const TABLE: Readonly<Record<string, readonly string[]>> = {
 	"no-fields-declared": ["service"],
 	"invalid-graphql-name": ["name", "declaration"],
+	"invalid-weight": ["weight", "declaration"],
 	"graphql-name-collision": ["first", "second", "name"],
 	"declared-twice": ["operationId"],
 	"unknown-link-parameter": ["link", "parameter", "operationId"],

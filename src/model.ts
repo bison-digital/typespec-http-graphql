@@ -103,6 +103,12 @@ export interface ConnectionPlan {
 	 */
 	readonly maximum: number | undefined;
 	/**
+	 * The smallest page size the operation accepts, from its page size's `@minValue` and
+	 * `@minValueExclusive` and those of the scalars its type extends; `undefined` where none is
+	 * stated. A `first: 0` asks the backend for at least this.
+	 */
+	readonly minimum: number | undefined;
+	/**
 	 * What bounds a page when `first` is absent and has no default: `maximum`.
 	 * `@listSize(assumedSize:)`, so a cost analysis can bound an unsliced connection. Never beside a
 	 * default, which the cost specification reads in its place (§8.2, §9.2.4).

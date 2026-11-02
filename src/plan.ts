@@ -6,6 +6,7 @@ import { type JsonDeclaration, jsonDeclarationsOf } from "./decorators.js";
 import { dispositionOf, type FieldInputs, mutationInputsOf, queryInputsOf } from "./inputs.js";
 import {
 	type AppliedDirective,
+	type ArgumentPlan,
 	asNullable,
 	type CallPlan,
 	type ConnectionPlan,
@@ -89,6 +90,76 @@ function carriesCredentials(parameter: { readonly type: string; readonly name: s
 	if (parameter.type === "cookie") return true;
 	if (parameter.type !== "header") return false;
 	return ["authorization", "proxy-authorization", "cookie"].includes(parameter.name.toLowerCase());
+}
+
+/**
+ * **The input types that take their model's own name**: each planned as `AuthorInputInput` whose
+ * model is `AuthorInput`, to that name, where no type claims it and no other input type would take
+ * it too. Otherwise the planned name stays, so a model that is also an output type, which owns the
+ * name, keeps its input type apart.
+ */
+function inputRenamesOf(
+	preferred: ReadonlyMap<string, string>,
+	book: NameBook,
+): ReadonlyMap<string, string> {
+	const wanted = new Map<string, number>();
+	for (const name of preferred.values()) wanted.set(name, (wanted.get(name) ?? 0) + 1);
+	return new Map(
+		[...preferred].filter(([, name]) => wanted.get(name) === 1 && book.owners(name).length === 0),
+	);
+}
+
+function renamedRef(ref: TypeRef, renames: ReadonlyMap<string, string>): TypeRef {
+	return ref.kind === "list"
+		? { ...ref, of: renamedRef(ref.of, renames) }
+		: { ...ref, name: renames.get(ref.name) ?? ref.name };
+}
+
+function renamedArgument(
+	argument: ArgumentPlan,
+	renames: ReadonlyMap<string, string>,
+): ArgumentPlan {
+	return { ...argument, type: renamedRef(argument.type, renames) };
+}
+
+/** A field with its arguments' types renamed, its keyed arms' as well; its own type is an output's. */
+function renamedField(
+	field: OutputFieldPlan,
+	renames: ReadonlyMap<string, string>,
+): OutputFieldPlan {
+	if (renames.size === 0) return field;
+	return {
+		...field,
+		arguments: field.arguments.map((argument) => renamedArgument(argument, renames)),
+		...(field.keyed === undefined
+			? {}
+			: {
+					keyed: {
+						...field.keyed,
+						arms: field.keyed.arms.map((arm) => ({
+							...arm,
+							arguments: arm.arguments.map((argument) => renamedArgument(argument, renames)),
+						})),
+					},
+				}),
+	};
+}
+
+function renamedDef(def: TypeDef, renames: ReadonlyMap<string, string>): TypeDef {
+	if (renames.size === 0) return def;
+	switch (def.kind) {
+		case "input":
+			return {
+				...def,
+				name: renames.get(def.name) ?? def.name,
+				fields: def.fields.map((field) => ({ ...field, type: renamedRef(field.type, renames) })),
+			};
+		case "object":
+		case "interface":
+			return { ...def, fields: def.fields.map((field) => renamedField(field, renames)) };
+		default:
+			return def;
+	}
 }
 
 /** `@cost(weight: "1")` on every root field and link: each calls a handler. */
@@ -273,7 +344,7 @@ function fieldOf(
 						batch: { wire: batch.wire, key: batch.key, items: batch.items, size: batch.size },
 					}),
 		},
-		directives:
+		directives: weighed(
 			batch !== undefined
 				? batchLinkDirectivesOf(maxItems, batch.size, result.projection)
 				: maxItems !== undefined
@@ -281,7 +352,31 @@ function fieldOf(
 					: connection === undefined
 						? [COST]
 						: [COST, listSizeOf(connection)],
+			declaration.weight,
+		),
 	};
+}
+
+/**
+ * **The field's `@cost(weight:)` times the calls one of its calls makes**, the `weight`
+ * `graphql.tsp` states: a handler that calls two backends makes two calls each time it is called.
+ * Written as a Float without the rounding noise a product can carry, so `"0.1"` times 3 is `"0.3"`.
+ */
+function weighed(
+	directives: readonly AppliedDirective[],
+	weight: number,
+): readonly AppliedDirective[] {
+	return directives.map((directive) => {
+		if (directive.name !== "cost") return directive;
+		// Fifteen significant digits, so 0.1 × 3 is written 0.3, as a person would state it.
+		const product = Number((Number(directive.arguments["weight"]) * weight).toPrecision(15));
+		// A weight so large its product passes the largest double is that double: a Float GraphQL can
+		// write, which `Infinity` is not, and still more than any limit can allow.
+		return {
+			...directive,
+			arguments: { weight: String(Number.isFinite(product) ? product : Number.MAX_VALUE) },
+		};
+	});
 }
 
 /**
@@ -820,11 +915,16 @@ export function planService(
 		})
 		.sort((a, b) => compare(a.route.operationId, b.route.operationId));
 
+	const renames = inputRenamesOf(projector.preferredInputNames, book);
 	return {
 		plan: {
-			types: projector.defs().filter((def) => reached.has(def.name)),
-			query: query.length === 0 ? [EMPTY_QUERY] : query,
-			mutation,
+			types: projector
+				.defs()
+				.filter((def) => reached.has(def.name))
+				.map((def) => renamedDef(def, renames)),
+			query:
+				query.length === 0 ? [EMPTY_QUERY] : query.map((field) => renamedField(field, renames)),
+			mutation: mutation.map((field) => renamedField(field, renames)),
 			operations,
 			statusCodes: survivors.some((entry) =>
 				Object.values(entry.field.call?.projection ?? {}).some(

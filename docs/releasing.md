@@ -15,6 +15,7 @@ suite never performs: it installs the versions its lockfile names.
 | 0.3.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 | 0.4.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 | 0.4.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
+| 0.5.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 
 A new library minor is a new row: `^0.34.0` does not reach 0.35.0. Move this package's range in the
 same round as `typespec-hono`'s, so a consumer installs one copy of the library for both surfaces.
@@ -114,6 +115,33 @@ installed into an empty directory with `typespec-hono` 0.31.1, as 0.4.0 was:
 | the collection run by the Postman CLI against the generated server, which refuses a duplicate title | exit 0, 18 assertions passing                                                           |
 | the same bookshop with no delete                                                                    | `graphql-create-repeated` on `Books.create`; the run fails at `createBook`, as it warns |
 | pnpm, installing 0.4.1 beside `typespec-postman` 0.8.0                                              | no peer issue                                                                           |
+
+### `0.5.0`, rehearsed with `typespec-postman` 0.9.0
+
+Published to the rehearsal registry at 0.5.0, naming `"typespec-http-zod": "^0.34.0"`, with
+`typespec-postman` 0.9.0 naming it `^0.4.1 || ^0.5.0`, and installed into an empty directory with
+`typespec-hono` 0.31.1: one `typespec-http-zod@0.34.1`, deduped under both, `graphql@17.0.2`. There,
+a bookshop whose `books` take a `tag`, weigh 2, and page by a size declaring `@minValue(1)
+@maxValue(100)`; whose shelves page by one declaring `@minValue(5)`, and a catalog by a `float64`
+declaring `@maxValue(10.5)`; with a list behind `@useAuth`, books carrying a bounded and an unbounded
+list of tags, and a create taking `AuthorInput`s:
+
+| step                                                                                                                  | result                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tsp compile .` with this package, `typespec-hono` and `typespec-postman`                                             | exit 0; `input AuthorInput`, `tags: [Tag!]! @listSize(assumedSize: 10)`, `notes: [Tag!]!`                                                                                           |
+| `tsc` over the generated files, `strict`, `exactOptionalPropertyTypes`, `noUnusedLocals`                              | exit 0                                                                                                                                                                              |
+| `books(first: 0)`                                                                                                     | no edge, `hasNextPage: true`, an `endCursor`; the handler asked for `limit: 1`                                                                                                      |
+| `shelves(first: 2)`, then `first: 2` after its `endCursor`                                                            | the first two shelves, the handler asked for `limit: 5`; then the third and fourth                                                                                                  |
+| the `endCursor` of `books(tag: "scifi")`, given to `books(tag: "scifi", first: 3)`, `books(tag: "poetry")`, `authors` | the first asks its handler for the backend's token; the other two `BAD_USER_INPUT`, no handler called                                                                               |
+| that connection's cursor forged to skip 100, then 101, past the page size's maximum                                   | the handler asked for `limit: 100` for each, no page past the maximum                                                                                                               |
+| `catalog(first: 10)`, then `catalog(first: 11)`                                                                       | the handler asked for `limit: 10`; then `BAD_USER_INPUT`                                                                                                                            |
+| the list behind `@useAuth`, unauthenticated, with `first: -1`, then with a cursor no connection issued                | `UNAUTHENTICATED` for each, no handler called                                                                                                                                       |
+| Field Cost of `books(first: 2) { nodes { id } }`; Type Cost of the tags, then the notes                               | 3; 12, then `Infinity`                                                                                                                                                              |
+| the same, installed with 0.4.1 from npm, the `weight` dropped                                                         | `first: 0` and `shelves(first: 2)` `BAD_USER_INPUT`; the scifi cursor taken by both others; `BAD_USER_INPUT` first behind `@useAuth`; the tags `Infinity`; `input AuthorInputInput` |
+| every fixture under `test/`, compiled by 0.4.1 from npm and by the rehearsal 0.5.0                                    | 68 compiles; every file beyond the runtime copy the same but where the changelog says it moves                                                                                      |
+| a bookshop declaring `@maxValue(10.5)` and `@minValueExclusive(2.5)` on `float64` page sizes, compiled by both        | `maximum: 10` and `minimum: 3` in the call, and `@listSize(assumedSize: 10)`, where 0.4.1 writes neither bound                                                                      |
+| `typespec-postman` 0.9.0's own fixtures, with both emitters, under 0.4.1 and under 0.5.0                              | every collection the same byte for byte                                                                                                                                             |
+| pnpm, installing 0.5.0 beside `typespec-postman` 0.9.0; beside 0.8.0                                                  | no peer issue; an unmet peer, 0.8.0 naming `^0.4.1`                                                                                                                                 |
 
 ## Release sequence
 

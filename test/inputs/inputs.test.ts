@@ -39,6 +39,7 @@ const PAGING: ConnectionPlan = {
 	after: "cursor",
 	item: named("Widget", true),
 	maximum: undefined,
+	minimum: undefined,
 	assumedSize: undefined,
 };
 

@@ -24,6 +24,7 @@ export function rootField(
 		names,
 		operation,
 		description: undefined,
+		weight: 1,
 		inputHeaders: new Set(),
 		node: operation.operation,
 	};
@@ -66,6 +67,7 @@ export function linkField(
 		when: undefined,
 		batch: undefined,
 		description: undefined,
+		weight: 1,
 		inputHeaders: new Set(),
 		node: operation.operation,
 	};

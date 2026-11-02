@@ -90,10 +90,14 @@ beforeAll(async () => {
 	tracing = (await import(join(served, "tracing.ts"))) as ReadmeTracing;
 }, 300_000);
 
-/** The Hono context the README's mount hands Yoga: here, only the request header it reads. */
+/**
+ * The Hono context the README's mount hands Yoga: here, the request header it reads and the request
+ * id Hono's `requestId()` middleware set.
+ */
 const honoContext = {
 	c: {
 		req: { header: (name: string) => (name === "authorization" ? "Bearer tracer" : undefined) },
+		get: (key: string) => (key === "requestId" ? "request-from-hono" : undefined),
 	},
 };
 
@@ -134,6 +138,23 @@ const ANSWER = {
 		},
 	},
 };
+
+describe("the README's server on graphql-yoga 6", () => {
+	it("answers with the request id the host's middleware set, whatever the caller sends", async () => {
+		const response = await server.yoga.fetch(
+			"http://tracer/graphql",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json", "x-request-id": "chosen-by-caller" },
+				// Not `DOCUMENT`: Yoga caches what it parsed, and the arms below count the parses.
+				body: JSON.stringify({ query: "{ __typename }" }),
+			},
+			honoContext,
+		);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("x-request-id")).toBe("request-from-hono");
+	});
+});
 
 describe("graphql 17's tracing channels", () => {
 	it("stay silent on execution through Yoga as the README mounts it", async () => {

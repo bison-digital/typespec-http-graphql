@@ -87,6 +87,7 @@ describe("connectionOf", () => {
 	it.each([
 		["Books_exclusive", "@maxValueExclusive(30) beside a default", 29, undefined],
 		["Books_scalarBounded", "a SmallPage of 40, extending a WidePage of 80", 40, 40],
+		["Books_leastExclusive", "none at all, a floor alone", undefined, undefined],
 	])("reads %s's maximum, %s", (operationId, _bounds, maximum, assumedSize) => {
 		expect(verdictOf(operationId)).toMatchObject({
 			kind: "connection",
@@ -94,8 +95,35 @@ describe("connectionOf", () => {
 		});
 	});
 
-	/** `@listSize(assumedSize:)` is an `Int` in the cost specification, so a fraction bounds nothing. */
-	it("assumes nothing from a maximum that is not an integer", () => {
+	/**
+	 * **The smallest page size the operation's schema accepts**, which a `first: 0` never asks below:
+	 * an exclusive bound plus one, and the greatest of the property's bound and every scalar's below
+	 * it. A fraction is the whole bound within it, and none is stated where nothing floors the page
+	 * size.
+	 */
+	it.each([
+		["Books_least", "@minValue(1)", 1],
+		["Books_leastExclusive", "@minValueExclusive(4)", 5],
+		["Books_floored", "a FloorPage of 3, extending a BasePage of 6", 6],
+		["Books_fractionalFloor", "@minValue(0.5) on a float64", 1],
+		["Books_fractionalFloorExclusive", "@minValueExclusive(2.5) on a float64", 3],
+		["Books_list", "no floor", undefined],
+	])("reads %s's minimum, %s", (operationId, _bounds, minimum) => {
+		const verdict = verdictOf(operationId);
+		expect(verdict.kind).toBe("connection");
+		expect(verdict.kind === "connection" ? verdict.plan.minimum : "none").toBe(minimum);
+	});
+
+	/**
+	 * **A fractional maximum is the whole bound within it**: a page of at most 10.5 items holds ten, so
+	 * `@listSize(assumedSize:)`, an `Int` in the cost specification, is 10, and so is a page of fewer
+	 * than 10.5.
+	 */
+	it("reads a maximum that is not an integer as the whole number within it", () => {
+		expect(verdictOf("Books_fractionalExclusive")).toMatchObject({
+			kind: "connection",
+			plan: { maximum: 10, assumedSize: 10 },
+		});
 		expect(verdictOf("Books_fractional")).toEqual({
 			kind: "connection",
 			plan: {
@@ -104,8 +132,9 @@ describe("connectionOf", () => {
 				first: "limit",
 				after: "cursor",
 				item: named("Book", true),
-				maximum: undefined,
-				assumedSize: undefined,
+				maximum: 10,
+				minimum: undefined,
+				assumedSize: 10,
 			},
 		});
 	});

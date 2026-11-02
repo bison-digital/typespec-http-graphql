@@ -1,12 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
+	getMinValue,
+	getMinValueExclusive,
 	getPagingOperation,
 	isArrayModelType,
 	isList,
 	type Model,
 	type ModelProperty,
 	type Program,
+	type Scalar,
 	type Type,
 } from "@typespec/compiler";
 import {
@@ -555,6 +558,30 @@ function hasInput(fixture: Fixture, root: RootField): boolean {
 }
 
 /**
+ * The smallest page size an operation accepts, as README § Connections states it: the greatest
+ * `@minValue` rounded up, or the least whole number past a `@minValueExclusive`, of the page size and
+ * the scalars it extends; 0 where none is stated.
+ */
+function smallestPageSizeOf(program: Program, pageSize: ModelProperty): number {
+	const bounds: number[] = [];
+	const targets: (ModelProperty | Scalar)[] = [pageSize];
+	for (
+		let scalar: Scalar | undefined = pageSize.type.kind === "Scalar" ? pageSize.type : undefined;
+		scalar !== undefined;
+		scalar = scalar.baseScalar
+	) {
+		targets.push(scalar);
+	}
+	for (const target of targets) {
+		const inclusive = getMinValue(program, target);
+		if (inclusive !== undefined) bounds.push(Math.ceil(inclusive));
+		const exclusive = getMinValueExclusive(program, target);
+		if (exclusive !== undefined) bounds.push(Math.floor(exclusive) + 1);
+	}
+	return bounds.length === 0 ? 0 : Math.max(...bounds);
+}
+
+/**
  * The wire input a handler must receive for the GraphQL arguments `args`: README § Arguments and
  * input, restated. Each argument under its wire key; an explicit `null` for an optional field that is
  * not `| null` dropped, as REST sees an omitted key; an absent field that is required and `| null`
@@ -600,6 +627,11 @@ export function handedFor(
 		}
 		if (disposition === "omitted") continue;
 		if (paging?.after === parameter.name) continue;
+		// README § Connections: `first: 0` asks for one item, or the smallest page size accepted.
+		if (paging?.first === parameter.name && fields["first"] === 0) {
+			handed[parameter.name] = Math.max(1, smallestPageSizeOf(fixture.program, parameter.param));
+			continue;
+		}
 		const name = paging?.first === parameter.name ? "first" : walk.fieldName(parameter.name);
 		place(parameter.name, parameter.param, name, parameter.param.type);
 	}

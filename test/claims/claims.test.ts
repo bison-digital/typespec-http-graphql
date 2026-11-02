@@ -96,14 +96,18 @@ const CLAIMS = {
 		"A union member is chosen by the status the handler returned, never by the shape of its body.",
 	first:
 		"`first: Int` fills the `@pageSize` parameter, whose default and maximum stay the operation's; a negative `first` is `BAD_USER_INPUT`, and a page the backend answers longer than `first` is cut to it.",
+	firstZero:
+		"`first: 0` answers no edge and says whether one follows: the handler is asked for one item past where the page begins, and `endCursor` resumes where the page began.",
+	minimum:
+		"No handler is asked for a page below the smallest page size the operation accepts, for `first: 0` or for a `first` beneath it: it is asked for that smallest page, and the edges are cut to `first`. The smallest is the greatest `@minValue`, or `@minValueExclusive` plus one, of the page size and the scalars it extends, rounded up to a whole number.",
 	after:
-		"`after: String` takes a cursor from this connection, an edge's or `pageInfo.endCursor`, and the handler receives the backend's own token for that page. Anything else is `BAD_USER_INPUT`.",
+		"`after: String` takes a cursor from this connection, an edge's or `pageInfo.endCursor`, and the handler receives the backend's own token for that page. Anything else is `BAD_USER_INPUT`, a raw backend token or a cursor another connection issued.",
 	connectionShape:
 		"`<Item>Connection { edges, nodes, pageInfo }`, `<Item>Edge { node, cursor }` and `PageInfo` follow relay.dev/graphql/connections.htm.",
 	edgeCursors:
 		"Every edge has an opaque cursor you can resume after, which a Relay client such as Apollo's `relayStylePagination` relies on; `startCursor` and `endCursor` are the first and last edges'.",
 	forwardOnly: "Paging is forward only, so `hasPreviousPage` is `false`.",
-	cost: '`@cost(weight: "1")` is on every root field and link, and `@listSize` on every connection field, in `schema.graphql` (the IBM cost directives) and in each field\'s `extensions` (`cost`, `listSize`), so a validation rule can read them from the runtime schema.',
+	cost: '`@cost(weight:)` is on every root field and link, `"1"` unless its `weight` says otherwise, and `@listSize` on every connection field, in `schema.graphql` (the IBM cost directives) and in each field\'s `extensions` (`cost`, `listSize`), so a validation rule can read them from the runtime schema.',
 	memo: "Calls are memoised per GraphQL context value, keyed by operation and input, so fifty books by one author cost one author read per request.",
 	mutationMemo:
 		"Mutations are never memoised, and each mutation forgets what the request has read, so a read after it is answered afresh.",
@@ -646,20 +650,37 @@ const ROWS: readonly Row[] = [
 		calls: [],
 	},
 	{
-		name: "a query argument the request schema refuses is BAD_USER_INPUT, at the argument",
-		claims: ["validation", "first"],
+		name: "first: 0 asks for one item at the page size's minimum, answers no edge, and says one follows",
+		claims: ["firstZero", "minimum", "first"],
 		fixture: "idiom",
-		document: `{ authors(first: 0) { nodes { id } } }`,
-		data: { authors: null },
-		errors: [
-			{
-				path: ["authors"],
-				code: "BAD_USER_INPUT",
-				issues: [{ path: ["first"], wirePath: ["limit"] }],
-			},
-		],
-		calls: [],
+		document: `{ authors(first: 0) { edges { cursor } pageInfo { hasNextPage endCursor } } }`,
+		handlers: { Authors_list: () => ({ status: 200, body: { items: AUTHORS, nextCursor: null } }) },
+		data: { authors: { edges: [], pageInfo: { hasNextPage: true, endCursor: cursor } } },
+		calls: [{ operationId: "Authors_list", input: { limit: 1 } }],
 	},
+	{
+		name: "first: 0 over nothing says no edge follows, and names no cursor",
+		claims: ["firstZero"],
+		fixture: "idiom",
+		document: `{ authors(first: 0) { edges { cursor } pageInfo { hasNextPage endCursor } } }`,
+		handlers: { Authors_list: () => ({ status: 200, body: { items: [], nextCursor: null } }) },
+		data: { authors: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } },
+		calls: [{ operationId: "Authors_list", input: { limit: 1 } }],
+	},
+	{
+		name: "after the end cursor of first: 0, the page begins where it began",
+		claims: ["firstZero", "after"],
+		fixture: "idiom",
+		prelude: `{ authors(first: 0) { pageInfo { endCursor } } }`,
+		document: `query ($after: String) { authors(first: 2, after: $after) { nodes { id } } }`,
+		variables: (prelude) => ({
+			after: authorsOf<{ pageInfo: PageInfo }>(prelude).pageInfo.endCursor,
+		}),
+		handlers: { Authors_list: (_caller, input) => paged(AUTHORS, input) },
+		data: { authors: { nodes: [{ id: authorId(1) }, { id: authorId(2) }] } },
+		calls: [{ operationId: "Authors_list", input: { limit: 2 } }],
+	},
+
 	{
 		name: "an input field the request schema refuses names the field written and the wire key",
 		claims: ["validation"],
@@ -1410,6 +1431,20 @@ const ROWS: readonly Row[] = [
 		calls: [{ operationId: "Items_list", input: {} }],
 	},
 	{
+		name: "first beneath the page size's minimum asks for the minimum, and the edges are cut to first",
+		claims: ["minimum", "first"],
+		fixture: "extras",
+		document: `{ items(first: 2) { nodes { id } pageInfo { hasNextPage } } }`,
+		handlers: {
+			Items_list: () => ({
+				status: 200,
+				body: { items: [item, { ...item, id: "i2" }, { ...item, id: "i3" }] },
+			}),
+		},
+		data: { items: { nodes: [{ id: "i1" }, { id: "i2" }], pageInfo: { hasNextPage: true } } },
+		calls: [{ operationId: "Items_list", input: { size: 3 } }],
+	},
+	{
 		name: "first above a maximum with no default is BAD_USER_INPUT at first",
 		claims: ["first", "validation"],
 		fixture: "extras",
@@ -1531,6 +1566,31 @@ const ROWS: readonly Row[] = [
 			},
 		],
 		calls: [],
+	},
+	{
+		name: "an after another connection issued is BAD_USER_INPUT, and the handler is not called",
+		claims: ["after"],
+		fixture: "idiom",
+		prelude: `{ authors(first: 1) { pageInfo { endCursor } } }`,
+		document: `query ($after: String) { author(authorId: "${AUTHOR}") {
+			editors(first: 1, after: $after) { nodes { displayName } } } }`,
+		variables: (prelude) => ({
+			after: authorsOf<{ pageInfo: PageInfo }>(prelude).pageInfo.endCursor,
+		}),
+		handlers: {
+			Authors_list: (_caller, input) => paged(AUTHORS, input),
+			Authors_read: () => read(author()),
+			Authors_listEditors: () => ({ status: 200, body: { items: [editor], nextCursor: null } }),
+		},
+		data: { author: { editors: null } },
+		errors: [
+			{
+				path: ["author", "editors"],
+				code: "BAD_USER_INPUT",
+				issues: [{ path: ["after"], wirePath: ["cursor"] }],
+			},
+		],
+		calls: [{ operationId: "Authors_read", input: { authorId: AUTHOR } }],
 	},
 
 	// Calls per request.

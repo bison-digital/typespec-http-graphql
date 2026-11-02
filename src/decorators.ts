@@ -28,6 +28,7 @@ import { GraphQLKeys } from "./lib.js";
 /** What `FieldOptions` arrives as: the plain object the spec wrote. */
 export interface FieldOptions {
 	readonly description?: string;
+	readonly weight?: string;
 }
 
 /** What `LinkOptions` arrives as. `when` maps one property name to the value or values that choose it. */
@@ -49,6 +50,8 @@ export interface RootDeclaration {
 	readonly operation: Operation;
 	/** The field's own description, in place of the operation's, where `graphql.tsp` gives one. */
 	readonly description: string | undefined;
+	/** The calls one call of the field makes, as `graphql.tsp` wrote it, where it states them. */
+	readonly weight: string | undefined;
 	readonly node: DiagnosticTarget;
 }
 
@@ -61,6 +64,8 @@ export interface LinkDeclaration {
 	readonly parameters: Readonly<Record<string, string>>;
 	/** The field's own description, in place of the operation's, where `graphql.tsp` gives one. */
 	readonly description: string | undefined;
+	/** The calls one call of the field makes, as `graphql.tsp` wrote it, where it states them. */
+	readonly weight: string | undefined;
 	/** Property name → the value or values that choose this link, as `graphql.tsp` wrote them. */
 	readonly when: Readonly<Record<string, string | readonly string[]>> | undefined;
 	/** Where the link calls a batch read: how its answer is matched to the values it was sent. */
@@ -111,6 +116,7 @@ export const $queryField = (
 		name,
 		operation: target,
 		description: options?.description,
+		weight: options?.weight,
 		node: context.decoratorTarget,
 	});
 };
@@ -126,6 +132,7 @@ export const $mutationField = (
 		name,
 		operation: target,
 		description: options?.description,
+		weight: options?.weight,
 		node: context.decoratorTarget,
 	});
 };
@@ -148,6 +155,7 @@ export const $link = (
 		operation,
 		parameters: parameters ?? {},
 		description: options?.description,
+		weight: options?.weight,
 		when: options?.when,
 		batch: options?.batch,
 		node: context.decoratorTarget,

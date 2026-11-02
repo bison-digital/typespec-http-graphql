@@ -465,6 +465,7 @@ export const PLAN: SchemaPlan = {
 					after: "page-token",
 					item: named("Book", true),
 					maximum: undefined,
+					minimum: undefined,
 					assumedSize: undefined,
 				},
 			}),

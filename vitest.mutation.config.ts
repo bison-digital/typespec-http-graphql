@@ -28,6 +28,7 @@ export default defineConfig({
 			"test/limits/limits.test.ts",
 			"test/requests/written.test.ts",
 			"test/requests/recorded.test.ts",
+			"test/lists/lists.test.ts",
 		],
 		testTimeout: 60_000,
 		/**

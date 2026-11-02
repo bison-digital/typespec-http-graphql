@@ -1,11 +1,9 @@
 import {
 	type DiagnosticTarget,
 	getDiscriminator,
-	getMaxItems,
 	getMinItems,
 	isArrayModelType,
 	isList,
-	isNullType,
 	isVoidType,
 	type Model,
 	type ModelProperty,
@@ -38,6 +36,7 @@ import {
 	type RootDeclaration,
 	rootDeclarationsOf,
 } from "./decorators.js";
+import { boundListOf, maxItemsOf, nonNullVariantsOf } from "./lists.js";
 import { fieldNameOf, isGraphQLName } from "./names.js";
 
 /**
@@ -60,6 +59,8 @@ import { fieldNameOf, isGraphQLName } from "./names.js";
 export interface FieldDeclared {
 	/** The field's description from `graphql.tsp`, in place of the operation's doc comment. */
 	readonly description: string | undefined;
+	/** The calls one call of the field makes: its `weight`, 1 unless `graphql.tsp` states one. */
+	readonly weight: number;
 	/**
 	 * The operation's optional headers `@inputHeader` takes as input, by TypeSpec name: arguments of
 	 * a query field or link, fields of a mutation's input.
@@ -334,12 +335,21 @@ function servabilityOf(program: Program, owned: Owned): Failure | undefined {
 	return undefined;
 }
 
-/** A property's type with `null` removed: the link resolves to `null` itself rather than calling. */
-function nonNullVariantsOf(type: Type): readonly Type[] {
-	if (type.kind !== "Union") return [type];
-	return [...type.variants.values()]
-		.map((variant) => variant.type)
-		.filter((variant) => !isNullType(variant));
+/** A GraphQL Float's spelling (spec 2.9.5), without its sign: the weights `@cost` takes (§7.1). */
+const FLOAT = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/;
+
+/**
+ * **A field's `weight` as a number of calls**: 1 where `graphql.tsp` states none, the number it
+ * writes where that is one at least 0, and `undefined` for anything else, which is refused: a number
+ * past the largest double, and one too small for a double that is not 0, which would read as 0 and
+ * count a field that makes calls as making none.
+ */
+function weightOf(weight: string | undefined): number | undefined {
+	if (weight === undefined) return 1;
+	const value = Number(weight);
+	if (!FLOAT.test(weight) || !Number.isFinite(value)) return undefined;
+	const [digits = ""] = weight.split(/[eE]/);
+	return value === 0 && /[1-9]/.test(digits) ? undefined : value;
 }
 
 /** The parameters a link may fill: path, query, header and cookie. A body property is not one. */
@@ -379,14 +389,6 @@ function acceptedTypesOf(type: Type): readonly Type[] {
 		accepted.push(scalar);
 	}
 	return accepted;
-}
-
-/** A property's list, and the type of its items, where its one non-null variant is an array. */
-function boundListOf(type: Type): { readonly array: Type; readonly items: Type } | undefined {
-	const [only, ...others] = nonNullVariantsOf(type);
-	if (only === undefined || others.length > 0) return undefined;
-	if (only.kind !== "Model" || !isArrayModelType(only)) return undefined;
-	return { array: only, items: only.indexer.value };
 }
 
 /** A link that failed a check, or the bindings of one that passed them all. */
@@ -506,9 +508,7 @@ function checkBatch(
 			wire: parameter.name,
 			key: resolveEncodedName(program, key, "application/json"),
 			items,
-			size:
-				getMaxItems(program, parameter.param) ??
-				(array === undefined ? undefined : getMaxItems(program, array.array)),
+			size: maxItemsOf(program, parameter.param),
 			item,
 		},
 	};
@@ -729,9 +729,9 @@ function checkLink(program: Program, declaration: LinkDeclaration, owned: Owned)
 			};
 		}
 		if (list !== undefined) {
-			const failure = listFailureOf(program, declaration, bindings, list.array, property, owned);
+			const failure = listFailureOf(program, declaration, bindings, property, owned);
 			if (failure !== undefined) return { failure };
-			maxItems = getMaxItems(program, property) ?? getMaxItems(program, list.array);
+			maxItems = maxItemsOf(program, property);
 		}
 		bindings.push({
 			parameter: parameterName,
@@ -758,7 +758,6 @@ function listFailureOf(
 	program: Program,
 	declaration: LinkDeclaration,
 	bindings: readonly LinkBinding[],
-	array: Type,
 	property: ModelProperty,
 	owned: Owned,
 ): Failure | undefined {
@@ -784,7 +783,7 @@ function listFailureOf(
 			},
 		};
 	}
-	if (getMaxItems(program, property) === undefined && getMaxItems(program, array) === undefined) {
+	if (maxItemsOf(program, property) === undefined) {
 		return { code: "link-list-unbounded", format: { link, property: property.name } };
 	}
 	return undefined;
@@ -852,8 +851,10 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 	const declaredFor = (
 		operation: HttpOperation,
 		description: string | undefined,
+		weight: number,
 	): FieldDeclared => ({
 		description,
+		weight,
 		inputHeaders: inputHeaders.get(operation.operation) ?? new Set(),
 	});
 
@@ -876,11 +877,21 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 		const operation = owned.get(declaration.operation);
 		if (operation === undefined) continue;
 		const { operationId } = operation;
+		const decorator = declaration.kind === "query" ? "@queryField" : "@mutationField";
 		if (!isGraphQLName(declaration.name)) {
-			const decorator = declaration.kind === "query" ? "@queryField" : "@mutationField";
 			drop(declaration.node, {
 				code: "invalid-graphql-name",
 				format: { name: declaration.name, declaration: `${decorator} on '${operationId}'` },
+			});
+			continue;
+		}
+		if (weightOf(declaration.weight) === undefined) {
+			drop(declaration.node, {
+				code: "invalid-weight",
+				format: {
+					weight: declaration.weight ?? "",
+					declaration: `${decorator} '${declaration.name}' on '${operationId}'`,
+				},
 			});
 			continue;
 		}
@@ -935,7 +946,11 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			route: candidate.owned.route,
 			names: candidate.owned.names,
 			operation: candidate.owned.operation,
-			...declaredFor(candidate.owned.operation, candidate.description),
+			...declaredFor(
+				candidate.owned.operation,
+				candidate.description,
+				weightOf(candidate.weight) ?? 1,
+			),
 			node: candidate.node,
 		});
 	}
@@ -956,6 +971,16 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			drop(declaration.node, {
 				code: "invalid-graphql-name",
 				format: { name: declaration.name, declaration: `@link on '${declaration.parent.name}'` },
+			});
+			continue;
+		}
+		if (weightOf(declaration.weight) === undefined) {
+			drop(declaration.node, {
+				code: "invalid-weight",
+				format: {
+					weight: declaration.weight ?? "",
+					declaration: `@link '${declaration.name}' on '${declaration.parent.name}'`,
+				},
 			});
 			continue;
 		}
@@ -1061,7 +1086,7 @@ export function surfaceOf(program: Program, emitted: EmittedService): Surface {
 			maxItems: link.maxItems,
 			when: link.when,
 			batch: link.batch,
-			...declaredFor(link.owned.operation, description),
+			...declaredFor(link.owned.operation, description, weightOf(link.weight) ?? 1),
 			node: link.node,
 		});
 	}

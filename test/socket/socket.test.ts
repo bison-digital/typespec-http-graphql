@@ -283,7 +283,9 @@ describe("the app both runtimes serve is the one the README describes", () => {
 	it("mounts /graphql as the README's Node and Workers examples do", () => {
 		const readme = readFileSync(join(packageRoot, "README.md"), "utf8");
 		const fixture = readFileSync(join(here, "app.fixture.ts"), "utf8");
+		// The Node mount for execution cancellation hands Yoga another request, and is graded apart.
 		const mounts = [...readme.matchAll(/^```ts\n([\s\S]*?)^```$/gm)]
+			.filter((block) => !(block[1] ?? "").startsWith("// node-cancellation.ts\n"))
 			.map((block) => mountOf(block[1] ?? ""))
 			.filter((mount) => mount !== undefined);
 		expect(mounts).toHaveLength(2);

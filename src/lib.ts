@@ -54,6 +54,16 @@ const diagnostics = {
 		},
 	},
 	/**
+	 * A field's `weight` that is no number of calls: refused rather than read as 1, which would
+	 * undercount the calls the spec says the field makes.
+	 */
+	"invalid-weight": {
+		severity: "warning",
+		messages: {
+			default: paramMessage`The weight '${"weight"}' (${"declaration"}) is no number of calls: one is a number at least 0, written as GraphQL writes a Float, as \`@cost(weight:)\` takes one. The declaration is dropped; the operation is still served over HTTP.`,
+		},
+	},
+	/**
 	 * A root field or link name GraphQL cannot carry. Refused rather than rewritten: the name is the
 	 * one `graphql.tsp` states, and a re-spelling would be a field no reader of that file can predict.
 	 */
@@ -328,6 +338,7 @@ const diagnostics = {
 type Diagnostics = {
 	"no-fields-declared": { readonly default: CallableMessage<["service"]> };
 	"invalid-graphql-name": { readonly default: CallableMessage<["name", "declaration"]> };
+	"invalid-weight": { readonly default: CallableMessage<["weight", "declaration"]> };
 	"graphql-name-collision": { readonly default: CallableMessage<["first", "second", "name"]> };
 	"declared-twice": { readonly default: CallableMessage<["operationId"]> };
 	"unknown-link-parameter": {

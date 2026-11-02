@@ -126,7 +126,7 @@ interface Items {
   @list
   @get
   list(
-    @query @pageSize @maxValue(100) size?: int32,
+    @query @pageSize @minValue(3) @maxValue(100) size?: int32,
     @query @continuationToken token?: string,
   ): ItemPage;
   @get

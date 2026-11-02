@@ -42,6 +42,7 @@ import {
 } from "@typespec/http";
 import { isReadonlyProperty } from "@typespec/openapi";
 import {
+	type AppliedDirective,
 	asNullable,
 	type BaseMember,
 	type DefaultLiteral,
@@ -54,6 +55,7 @@ import {
 	type TypeDef,
 	type TypeRef,
 } from "./model.js";
+import { maxItemsOf } from "./lists.js";
 import { enumValueNameOf, fieldNameOf, type NameBook, typeNameOf } from "./names.js";
 
 /**
@@ -514,6 +516,22 @@ function templateArgumentNameOf(program: Program, arg: Type): string {
  * The models a model is built from, transitively: its `extends` bases and the models it spreads,
  * each a candidate interface. An array, a `Record` and an anonymous model are no interface's source.
  */
+/**
+ * **An interface's field states the list bound each implementer's field states**, where all state
+ * the same one: `@listSize` is a field definition's directive (cost specification §8.1), and an
+ * analyser costing `... on BookInterface { marks }` reads the interface's field. A property's field
+ * carries no directive but that bound; `@cost` is on a field that calls, and no interface field does.
+ */
+function sharedDirectives(
+	first: OutputFieldPlan,
+	others: readonly OutputFieldPlan[],
+): readonly AppliedDirective[] {
+	const shared = JSON.stringify(first.directives);
+	return others.every((other) => JSON.stringify(other.directives) === shared)
+		? first.directives
+		: [];
+}
+
 function sourceModelsOf(model: Model): Model[] {
 	const found: Model[] = [];
 	const visit = (current: Model): void => {
@@ -588,6 +606,7 @@ export class TypeProjector {
 	#holdings: ReadonlyMap<Type, TypeHint> | undefined;
 	readonly #shared: SharedTypeWarning[] = [];
 	readonly #sharedWarned = new Set<Type>();
+	readonly #preferredInputs = new Map<string, string>();
 
 	/**
 	 * `typeSchemaNames`: the identifier `schemas.gen.ts` exports each declared type's validator under,
@@ -613,6 +632,17 @@ export class TypeProjector {
 
 	get warnings(): readonly ProjectionWarning[] {
 		return this.#warnings;
+	}
+
+	/**
+	 * **The input types whose model is named with the suffix an input type takes**, as `AuthorInput`
+	 * is: each by the name it was planned under, `AuthorInputInput`, to the model's own, which it
+	 * takes where no other type claims it. `@typespec/graphql` keeps such a name, and so does
+	 * HotChocolate. Decided once every type is planned (`planService`), so which name a type gets
+	 * never depends on the order the types were reached in.
+	 */
+	get preferredInputNames(): ReadonlyMap<string, string> {
+		return this.#preferredInputs;
 	}
 
 	/** Each anonymous type named after the first of the members holding it (`anonymous-type-shared`). */
@@ -724,17 +754,24 @@ export class TypeProjector {
 			if (!reached.has(name) || def?.kind !== "interface" || own === undefined) continue;
 			const members = def.members ?? [];
 			const objects = members.map((member) => this.#objectDefOf(member));
-			const fields = this.#objectDefOf(own)
-				.fields.filter((field) =>
-					objects.every((object) =>
-						object.fields.some(
-							(candidate) =>
-								candidate.name === field.name &&
-								JSON.stringify(candidate.type) === JSON.stringify(field.type),
-						),
+			const fields = this.#objectDefOf(own).fields.flatMap((field) => {
+				const shared = objects.map((object) =>
+					object.fields.find(
+						(candidate) =>
+							candidate.name === field.name &&
+							JSON.stringify(candidate.type) === JSON.stringify(field.type),
 					),
-				)
-				.map((field) => ({ ...field, arguments: [], call: undefined, directives: [] }));
+				);
+				if (shared.includes(undefined)) return [];
+				return [
+					{
+						...field,
+						arguments: [],
+						call: undefined,
+						directives: sharedDirectives(field, shared as readonly OutputFieldPlan[]),
+					},
+				];
+			});
 			this.#defs.set(name, { ...def, fields });
 			for (const member of members) implement(member, name);
 		}
@@ -777,7 +814,7 @@ export class TypeProjector {
 						description: getDoc(this.#program, property) ?? first.description,
 						arguments: [],
 						call: undefined,
-						directives: [],
+						directives: sharedDirectives(first, others as readonly OutputFieldPlan[]),
 					},
 				];
 			});
@@ -1562,6 +1599,9 @@ export class TypeProjector {
 			);
 		}
 		const name = `${self.name}${suffix}${position.input ? "Input" : ""}`;
+		if (position.input && self.name.endsWith(`${suffix}Input`)) {
+			this.#preferredInputs.set(name, self.name);
+		}
 		const reservedModel = this.#reservedName(effective, hint, name);
 		if (reservedModel !== undefined) {
 			cache.set(effective, reservedModel);
@@ -1743,6 +1783,8 @@ export class TypeProjector {
 					this.#memberHint(hint, property),
 					this.#carrierOf(property),
 				);
+			// A discriminator is never a list, so it has none.
+			const maxItems = maxItemsOf(this.#program, property);
 			return {
 				name: fieldNameOf(wire),
 				wire,
@@ -1751,7 +1793,16 @@ export class TypeProjector {
 				deprecationReason: getDeprecationDetails(this.#program, property)?.message,
 				arguments: [],
 				call: undefined,
-				directives: [],
+				/**
+				 * **A list bounded by `@maxItems` states its bound as `@listSize(assumedSize:)`** (cost
+				 * specification §8.1), so Type Cost counts its items rather than assuming the list
+				 * infinite. The bound is a fact the server keeps: every answer is parsed by its arm's
+				 * schema, which refuses a longer list.
+				 */
+				directives:
+					maxItems === undefined || type.kind !== "list"
+						? []
+						: [{ name: "listSize", arguments: { assumedSize: maxItems } }],
 			};
 		});
 	}
