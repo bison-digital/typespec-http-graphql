@@ -6,7 +6,9 @@ using HttpGraphQL;
 
 /**
  * A bookshop whose result unions have members sharing a field name with another response shape:
- * one union for each way two fields of one selection set can fail to merge (GraphQL 5.3.2).
+ * one union for each way two fields of one selection set can fail to merge (GraphQL 5.3.2). And the
+ * shapes `resultPathsOf` walks below a member: a list at the root, a union nested in a wrapper, and
+ * a union one of whose variants holds another of its own.
  */
 @service
 namespace Bookshop;
@@ -97,6 +99,40 @@ union Copy {
   ebook: Ebook,
 }
 
+model Hardback {
+  isbn: string;
+  pages: int32;
+}
+
+model Audiobook {
+  isbn: string;
+  minutes: int32;
+}
+
+/** On the wire as `{ kind, value }`, and beside a problem, so GraphQL wraps it whole. */
+@discriminated
+union Release {
+  hardback: Hardback,
+  audiobook: Audiobook,
+}
+
+model TitleIs {
+  kind: "title";
+  title: string;
+}
+
+/** A rule over another rule: a variant whose payload is the union it is a variant of. */
+model Not {
+  kind: "not";
+  rule: Rule;
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "kind" })
+union Rule {
+  title: TitleIs,
+  not: Not,
+}
+
 @route("/books")
 interface Books {
   @post create(@body body: {
@@ -109,6 +145,7 @@ interface Books {
   @route("/{id}/shelve") @get shelve(@path id: string): Book | Shelved | Reserved;
   @route("/{id}/edition") @get edition(@path id: string): Edition;
   @route("/{id}/copy") @get copy(@path id: string): Copy;
+  @route("/{id}/release") @post release(@path id: string): Release | Problem;
 }
 
 @route("/shelves")
@@ -117,6 +154,8 @@ interface Shelves {
     @statusCode _: 202;
     @body holdings: Printed[];
   };
+  @route("/{id}/printings") @get printings(@path id: string): Printed[];
+  @route("/{id}/rule") @get rule(@path id: string): Rule;
 }
 
 @route("/formats")
@@ -130,4 +169,7 @@ interface Formats {
 @@queryField(Books.copy, "copy");
 @@queryField(Shelves.read, "shelf");
 @@queryField(Formats.read, "format");
+@@queryField(Shelves.printings, "printings");
+@@queryField(Shelves.rule, "shelfRule");
+@@mutationField(Books.release, "releaseBook");
 @@link(Paperback, "format", Formats.read, #{ kind: "kind" });

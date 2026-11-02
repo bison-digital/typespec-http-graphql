@@ -1,6 +1,6 @@
 {
 	"name": "typespec-http-graphql",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "TypeSpec emitter: generate the GraphQL surface a spec declares, as a graphql-js schema and its SDL, whose resolvers call the same handlers, validated by the same Zod schemas, as a generated HTTP server.",
 	"keywords": [
 		"codegen",
@@ -60,6 +60,7 @@
 		"@apollo/client": "4.3.3",
 		"@envelop/core": "5.6.1",
 		"@graphql-inspector/core": "8.0.1",
+		"@graphql-tools/utils": "13.2.1",
 		"@hono/node-server": "2.1.5",
 		"@hono/zod-validator": "^0.9.1",
 		"@stryker-mutator/core": "10.0.0",

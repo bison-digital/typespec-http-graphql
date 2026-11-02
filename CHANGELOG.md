@@ -3,6 +3,30 @@
 Every notable change to this package. The format follows Keep a Changelog, and the version follows
 semantic versioning.
 
+## [0.4.1] - 2026-11-02
+
+0.4.0 was tagged, and its release stopped before npm, so 0.4.1 is the first 0.4 published. Every file
+this emitter writes is what 0.4.0 writes; `graphqlRequestsOf` is what changes.
+
+### Fixed
+
+- **A recursive union no longer stops `graphqlRequestsOf`.** A variant whose payload is the union it
+  is a variant of, as a rule over another rule is, was selected without end, and the call overflowed
+  the stack, so a tool reading the requests, as typespec-postman does, wrote none of them. A
+  recursive type is now cut where `@graphql-tools/utils`' `buildOperationNodeForField` cuts one by
+  default: a payload whose type is an object the selection is already inside a field of is left out,
+  and so is a union's member that is one. The test suite holds the selection to that function's own
+  document. 0.3 had this too.
+- **`resultPathsOf` walks a list at the root.** A query answering `Book[]` named `["books", "id"]`
+  for `["id"]`, a path no answer has, and nothing for `["0", "id"]`. The body's own index now comes
+  first, as its array has it.
+- **`resultPathsOf` finds a value below a union nested in the answer**, as a create answering a
+  discriminated union beside a problem has one, where every member of that union holds the value
+  under one response name. A value its members hold under two names, or that one of them lacks, has
+  no path, since the path cannot name the member.
+- The README's `createBook` document is the one its surface writes, abridged, and the documentation
+  suite now holds it to that.
+
 ## [0.4.0] - 2026-11-01
 
 A minor: `graphqlRequestsOf` publishes a new member, `resultPathsOf`, and writes other documents

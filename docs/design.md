@@ -1,6 +1,6 @@
 # `typespec-http-graphql` — design
 
-**Status:** built, as version 0.4.0. The cross-ecosystem research behind it is in
+**Status:** built, as version 0.4.1. The cross-ecosystem research behind it is in
 [`research.md`](research.md); the README states the package as it ships.
 
 ## What it is

@@ -53,6 +53,8 @@ export declare function featuredBookFor(c: Context): Promise<unknown>;
 
 const workDir = join(packageRoot, "test", ".out-readme");
 let surfaceDiagnostics: readonly { readonly code: string; readonly severity: string }[] = [];
+/** The document `graphqlRequestsOf` writes for the surface's `createBook`, as another tool reads it. */
+let writtenCreateBook = "";
 
 beforeAll(async () => {
 	rmSync(workDir, { recursive: true, force: true });
@@ -66,6 +68,22 @@ beforeAll(async () => {
 		outDir: join(workDir, "generated"),
 	});
 	surfaceDiagnostics = compiled.diagnostics;
+	const read = (
+		compiled.program.emitters.find((emitter) => emitter.metadata.name === "typespec-http-graphql")
+			?.library.entrypoint?.esmExports as
+			| {
+					readonly graphqlRequestsOf?: (
+						program: unknown,
+					) =>
+						| readonly { readonly requests: readonly { field: string; document: string }[] }[]
+						| undefined;
+			  }
+			| undefined
+	)?.graphqlRequestsOf;
+	writtenCreateBook =
+		read?.(compiled.program)
+			?.flatMap((service) => service.requests)
+			.find((request) => request.field === "createBook")?.document ?? "";
 	writeFileSync(join(workDir, "handlers.ts"), HANDLERS);
 	// A block that names its file in its first line (`// graphql.ts`) is written as that file, so the
 	// examples that import it compile against it.
@@ -119,9 +137,33 @@ describe("the README's examples compile", () => {
 		const unaliased = document.replace(/^(\s*)\w+: (\w+)$/gm, "$1$2");
 		expect(unaliased).not.toBe(document);
 		expect(validate(schema, parse(unaliased)).map((error) => error.message)).toEqual([
-			'Fields "status" conflict because they return conflicting types "BookStatus!" and "Int!". Use different aliases on the fields to fetch both if this was intentional.',
 			'Fields "title" conflict because they return conflicting types "String" and "String!". Use different aliases on the fields to fetch both if this was intentional.',
+			'Fields "status" conflict because they return conflicting types "BookStatus!" and "Int!". Use different aliases on the fields to fetch both if this was intentional.',
 		]);
+	});
+
+	/**
+	 * **Each line the README shows is a line the emitter writes, in its order and at its depth**: the
+	 * README indents a level by a tab, the emitter by two spaces, so each tab is read as two spaces and
+	 * a field shown under the wrong member, or the wrong parent, is not found.
+	 */
+	it("shows lines of the document that surface writes for createBook, in its order and nesting", () => {
+		const shown = (blocks(readme, "graphql")[0] ?? "")
+			.split("\n")
+			.filter((line) => line.trim() !== "")
+			.map((line) => line.replace(/^\t+/, (tabs) => "  ".repeat(tabs.length)));
+		const written = writtenCreateBook.split("\n");
+		// Non-vacuity: the surface's createBook selects more than the abridged block shows.
+		expect(written.length).toBeGreaterThan(shown.length);
+		let next = 0;
+		for (const line of shown) {
+			const at = written.indexOf(line, next);
+			expect(
+				at,
+				`${line} is not a line of the written document after line ${next}`,
+			).toBeGreaterThanOrEqual(0);
+			next = at + 1;
+		}
 	});
 
 	it("compiles every TypeScript example against what that surface emits", () => {

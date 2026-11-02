@@ -35,9 +35,10 @@ export interface GraphQLRequest {
 	readonly description: string | undefined;
 	/**
 	 * One named operation calling the field: every argument a variable, and the field's type
-	 * selected to its leaf fields, `__typename` first, a union's members each by a fragment. A field
-	 * that cannot answer under the name another of its selection set already answers under, such as
-	 * an enum `status` beside a problem's `Int!` one, is aliased, so the schema accepts the document.
+	 * selected to its leaf fields, `__typename` first, a union's members each by a fragment, and a
+	 * recursive type cut where `@graphql-tools/utils` cuts one. A field that cannot
+	 * answer under the name another of its selection set already answers under, such as an enum
+	 * `status` beside a problem's `Int!` one, is aliased, so the schema accepts the document.
 	 */
 	readonly document: string;
 	/**
@@ -46,11 +47,15 @@ export interface GraphQLRequest {
 	 */
 	readonly successTypenames: readonly string[] | undefined;
 	/**
-	 * **Where a success answer holds a value of the REST response's body.** For a path into a 2xx
-	 * arm's JSON body, by wire names, the path below `data` at which each success member's selection
-	 * holds that value, its alias where the document gives one, keyed by the member's typename, or
-	 * for a field of one object type by that type's name. A member whose selection does not hold it
-	 * has no entry; nor has a connection, a leaf, or a member that answers no body.
+	 * **Where a success answer holds a value of the REST response's body**, as GraphQL answers it: an
+	 * enum by its GraphQL name, an object by the fields the document selects. For a path into a 2xx
+	 * arm's JSON body, by wire names and each index into a list as its decimal string, a list at the
+	 * root included, the path below `data` at which each success member's selection holds that value,
+	 * its alias where the document gives one, keyed by the member's typename, or for a field of one
+	 * object type by that type's name. Below a union nested in the answer, whose members the path
+	 * cannot name, a path is given only where every member holds the value under one response name.
+	 * A member whose selection does not hold it has no entry; nor has a connection, a leaf, or a
+	 * member that answers no body.
 	 */
 	readonly resultPathsOf: (wire: readonly string[]) => ReadonlyMap<string, readonly string[]>;
 	/**
@@ -225,36 +230,49 @@ function callsNothing(field: OutputFieldPlan): boolean {
  * The selection of a named type: `__typename`, then its leaf fields; a union's members each by a
  * fragment of theirs, one with no leaf of its own by its `__typename`; a wrapper's `value`, and a
  * discriminated union's payload under its envelope, below it.
+ *
+ * **A recursive type is cut where `@graphql-tools/utils`' `buildOperationNodeForField` cuts one**,
+ * at its default `circularReferenceDepth` of 1. `ancestors` names the object types the selection is
+ * already inside a field of; a union never counts. A union's member that is one of them is left
+ * out, and so is a payload whose type is.
  */
-function selectionOf(defs: ReadonlyMap<string, TypeDef>, name: string): Selection[] {
+function selectionOf(
+	defs: ReadonlyMap<string, TypeDef>,
+	name: string,
+	ancestors: ReadonlySet<string> = new Set(),
+): Selection[] {
 	const def = defOf(defs, name);
 	if (def.kind === "union") {
 		const discriminator =
 			def.resolveBy.kind === "discriminator" ? def.resolveBy.property : undefined;
 		return [
 			typenameNode(),
-			...def.members.map((member): FragmentNode => {
-				const leaves = leavesOf(defs, member, discriminator);
-				return {
-					kind: "fragment",
-					on: member,
-					selections: leaves.length === 0 ? [typenameNode()] : leaves,
-				};
-			}),
+			...def.members
+				.filter((member) => !ancestors.has(member))
+				.map((member): FragmentNode => {
+					const leaves = leavesOf(defs, member, discriminator, ancestors);
+					return {
+						kind: "fragment",
+						on: member,
+						selections: leaves.length === 0 ? [typenameNode()] : leaves,
+					};
+				}),
 		];
 	}
-	return [typenameNode(), ...leavesOf(defs, name, undefined)];
+	return [typenameNode(), ...leavesOf(defs, name, undefined, ancestors)];
 }
 
 /**
  * The leaf fields of an object or interface, and the one field below them a request also selects:
  * a wrapper's `value`, or, in a member of a union `discriminator` resolves, the envelope beside the
- * discriminator, each selected to its own leaves. Neither is selected where it calls a handler.
+ * discriminator, each selected to its own leaves. Neither is selected where it calls a handler, nor
+ * where its type is one of the `ancestors` (`selectionOf`); below it, this type is one of them.
  */
 function leavesOf(
 	defs: ReadonlyMap<string, TypeDef>,
 	name: string,
 	discriminator: string | undefined,
+	ancestors: ReadonlySet<string>,
 ): FieldNode[] {
 	const def = defOf(defs, name);
 	if (def.kind !== "object" && def.kind !== "interface") return [];
@@ -270,9 +288,14 @@ function leavesOf(
 		if (!callsNothing(field)) continue;
 		if (isLeaf(defs, field.type)) {
 			nodes.push(fieldNode(field.name, field.type, field.wire));
-		} else if (field === payload) {
+		} else if (field === payload && !ancestors.has(innermost(field.type))) {
 			nodes.push(
-				fieldNode(field.name, field.type, field.wire, selectionOf(defs, innermost(field.type))),
+				fieldNode(
+					field.name,
+					field.type,
+					field.wire,
+					selectionOf(defs, innermost(field.type), new Set(ancestors).add(name)),
+				),
 			);
 		}
 	}
@@ -406,18 +429,33 @@ function printed(selections: readonly Selection[], indent: string): string[] {
 }
 
 /**
- * Where in a selection the body's value at `wire` is answered: each key by the response name of the
- * field that reads it, and each index into a list as it is.
+ * Where in a selection the body's value at `[head, ...rest]` is answered: each key by the response
+ * name of the field that reads it, and each index into a list as it is. Below a union, whose fragments
+ * add nothing to the path, only where every member answers the value at one path, since the path
+ * cannot name the member it holds for.
  */
-function located(selections: readonly Selection[], wire: readonly string[]): string[] | undefined {
-	const [head, ...rest] = wire;
-	if (head === undefined) return [];
+function located(
+	selections: readonly Selection[],
+	head: string,
+	rest: readonly string[],
+): string[] | undefined {
 	const node = selections.find(
 		(selection): selection is FieldNode => selection.kind === "field" && selection.wire === head,
 	);
-	if (node === undefined) return undefined;
-	const below = within(node.type, node.selections, rest);
-	return below === undefined ? undefined : [node.alias ?? node.name, ...below];
+	if (node !== undefined) {
+		const below = within(node.type, node.selections, rest);
+		return below === undefined ? undefined : [node.alias ?? node.name, ...below];
+	}
+	const members = selections.filter(
+		(selection): selection is FragmentNode => selection.kind === "fragment",
+	);
+	const [first, ...others] = members.map((member) => located(member.selections, head, rest));
+	return first !== undefined && others.every((path) => samePath(path, first)) ? first : undefined;
+}
+
+/** Two members' paths to one wire path, which are of one length: a segment for each of its own. */
+function samePath(path: readonly string[] | undefined, other: readonly string[]): boolean {
+	return path !== undefined && path.every((segment, index) => segment === other[index]);
 }
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/;
@@ -434,7 +472,7 @@ function within(
 		const below = within(type.of, selections, rest);
 		return below === undefined ? undefined : [head, ...below];
 	}
-	return selections === undefined ? undefined : located(selections, wire);
+	return selections === undefined ? undefined : located(selections, head, rest);
 }
 
 /**
@@ -521,10 +559,11 @@ function resultPathsIn(
 		if (projection.as === "wrap") wrapped.set(projection.type, projection.hasBody);
 	}
 	const paths = new Map<string, readonly string[]>();
-	const add = (typename: string, within: readonly Selection[]) => {
+	const add = (typename: string, answered: readonly Selection[]) => {
 		const hasBody = wrapped.get(typename);
 		if (hasBody === false) return;
-		const found = located(within, hasBody === true ? ["value", ...wire] : wire);
+		// The field's own lists come first: a list root's body is an array, each item by its index.
+		const found = within(field.type, answered, hasBody === true ? ["value", ...wire] : wire);
 		if (found !== undefined) paths.set(typename, [field.name, ...found]);
 	};
 	if (successTypenames === undefined) {

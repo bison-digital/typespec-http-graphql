@@ -35,6 +35,26 @@ jobs:
             echo "::error::from the registry, then re-tag."
             exit 1
           fi
+          # A dependency the lockfile resolves to a local path, however package.json spells it
+          # (`link:`, `file:`, a bare `../`), but the package's own `link:` to itself.
+          linked=$(node -e '
+            const text = require("node:fs").readFileSync("pnpm-lock.yaml", "utf8");
+            const importers = (text.split(/^importers:$/m)[1] ?? "").split(/^\S/m)[0];
+            let name = "";
+            const found = [];
+            for (const line of importers.split("\n")) {
+              const key = /^ {6}(\S.*):$/.exec(line);
+              if (key) name = key[1];
+              const version = /^ {8}version: \x27?((?:link|file):[^\x27]*)\x27?$/.exec(line);
+              if (version && version[1] !== "link:" && version[1] !== "link:.") found.push(`${name}: ${version[1]}`);
+            }
+            console.log(found.join(", "));
+          ')
+          if [ -n "$linked" ]; then
+            echo "::error::pnpm-lock.yaml resolves a dependency to a local path: $linked"
+            echo "::error::Name its published version in package.json, re-run 'pnpm install', then re-tag."
+            exit 1
+          fi
 
       - run: pnpm install --frozen-lockfile
 

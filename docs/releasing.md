@@ -14,6 +14,7 @@ suite never performs: it installs the versions its lockfile names.
 | 0.3.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 | 0.3.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 | 0.4.0        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
+| 0.4.1        | `^0.34.0`           | 0.31.1                 | 1.15 or later | 17        |
 
 A new library minor is a new row: `^0.34.0` does not reach 0.35.0. Move this package's range in the
 same round as `typespec-hono`'s, so a consumer installs one copy of the library for both surfaces.
@@ -99,6 +100,20 @@ a problem whose `status` is an `Int!`:
 | every document `graphqlRequestsOf` wrote, through graphql-js `validate`                             | none refused; with 0.3.1 from npm, `createBook` is, `Fields "status" conflict`     |
 | every fixture under `test/`, compiled by 0.3.1 from npm and by the rehearsal 0.4.0                  | 217 files the same byte for byte, and the same diagnostics, for each of 64 entries |
 | the collection run by the Postman CLI against the generated server, which refuses a duplicate title | exit 0, every assertion passing; `createBook` reads `bookId` out of its answer     |
+
+### `0.4.1`, rehearsed with `typespec-postman` 0.8.0
+
+0.4.0's release stopped before npm, so 0.4.1 is rehearsed as the first 0.4 published.
+Published to a fresh rehearsal registry at 0.4.1 with `typespec-postman` 0.8.0 naming `^0.4.0`, and
+installed into an empty directory with `typespec-hono` 0.31.1, as 0.4.0 was:
+
+| step                                                                                                | result                                                                                  |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| every document `graphqlRequestsOf` wrote for the bookshop, through graphql-js `validate`            | none refused                                                                            |
+| every fixture under `test/`, compiled by the rehearsal 0.4.0 and 0.4.1                              | 217 files the same byte for byte, and the same diagnostics, for each of 63 entries      |
+| the collection run by the Postman CLI against the generated server, which refuses a duplicate title | exit 0, 18 assertions passing                                                           |
+| the same bookshop with no delete                                                                    | `graphql-create-repeated` on `Books.create`; the run fails at `createBook`, as it warns |
+| pnpm, installing 0.4.1 beside `typespec-postman` 0.8.0                                              | no peer issue                                                                           |
 
 ## Release sequence
 

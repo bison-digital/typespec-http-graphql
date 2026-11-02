@@ -385,7 +385,8 @@ schema, publish `printSchema` of the extended one.
 
 `graphqlRequestsOf(program)` answers, once this emitter has run in a compile, one request for each
 root field it served, per service: a document the schema accepts, its arguments as variables and its
-result selected to its leaf fields, and `variables(values)`, which turns a REST request's values into
+result selected to its leaf fields, a recursive type cut where `@graphql-tools/utils` cuts one, and
+`variables(values)`, which turns a REST request's values into
 that document's variables, so the handler receives what that REST request would hand it. A tool that
 writes requests for the HTTP surface writes them for this one from it, and no document drifts from
 the schema. Before this emitter has run on a program it answers `undefined`. typespec-postman writes
@@ -398,7 +399,8 @@ whose types differ, nullability included (spec §5.3.2): a book's `status` enum 
 compared with that first one, and two objects answering under one name have their selections compared
 below them, as Apollo Federation's query planner decides. A field that cannot merge is aliased as
 `@graphql-tools/utils` spells an alias, its name and its type with `!` as `NonNull`, `[` as `List` and
-`]` dropped:
+`]` dropped. The document this README's surface writes for `createBook`, abridged to the fields
+that conflict:
 
 ```graphql
 mutation CreateBook($input: CreateBookInput!) {
@@ -406,8 +408,8 @@ mutation CreateBook($input: CreateBookInput!) {
 		__typename
 		... on Book {
 			id
-			status
 			title
+			status
 		}
 		... on ValidationProblem {
 			titleStringNonNull: title
@@ -420,10 +422,13 @@ mutation CreateBook($input: CreateBookInput!) {
 An alias never takes the name another field of the set is selected by, and `__alias_<n>` follows it
 where it would. Every alias counts toward `aliasLimit`.
 
-`resultPathsOf(wire)` says where an answer holds a value of the REST response's body: for a path into
-a 2xx arm's JSON body, by wire names, the path below `data` at which each success member's selection
-holds it, alias included, keyed by typename. typespec-postman reads a created id out of a create
-mutation's answer with it.
+`resultPathsOf(wire)` says where an answer holds a value of the REST response's body, as GraphQL
+answers it, an enum by its GraphQL name: for a path into a 2xx arm's JSON body, by wire names and an
+index into a list as its decimal string, the path below `data` at which each success member's
+selection holds it, alias included, keyed by typename. A list at the root is walked by index, as
+below. Below a union nested in the answer, whose members a path cannot name, a path is given only
+where every member holds the value under one response name. typespec-postman reads a created id out
+of a create mutation's answer with it.
 
 ## What a client sees
 

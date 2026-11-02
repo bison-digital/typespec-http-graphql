@@ -1,4 +1,14 @@
-import { buildSchema, parse, validate } from "graphql";
+import { buildOperationNodeForField } from "@graphql-tools/utils";
+import {
+	buildSchema,
+	type FieldNode,
+	type OperationDefinitionNode,
+	parse,
+	print,
+	type SelectionSetNode,
+	validate,
+	visit,
+} from "graphql";
 import { describe, expect, it } from "vitest";
 import {
 	type ArgumentPlan,
@@ -609,6 +619,138 @@ describe("a document's result selection", () => {
 		).toThrow("the plan defines no type Book");
 	});
 
+	/**
+	 * **A recursive type is cut where `@graphql-tools/utils`' `buildOperationNodeForField` cuts one**,
+	 * at its default `circularReferenceDepth` of 1: a field whose type is an object the selection is
+	 * already inside a field of is left out, and so is a union's member that is one; a union never
+	 * counts. So `Negate`'s `operand` is selected once, without `Negate` among its members, and
+	 * `Twice`'s `again` once, without its own `again`.
+	 */
+	const filter: readonly TypeDef[] = [
+		union("Filter", ["Eq", "Negate", "Twice"], "kind"),
+		object("Eq", [plain("kind", S("String")), plain("value", S("String"))]),
+		object("Negate", [plain("kind", S("String")), plain("operand", S("Filter"))]),
+		object("Twice", [plain("kind", S("String")), plain("again", S("Twice"))]),
+	];
+	/** A member reached again inside itself, through another union: left out there. */
+	const reentered: readonly TypeDef[] = [
+		union("Holding", ["Shelved", "Boxed"], "kind"),
+		object("Shelved", [plain("kind", S("String")), plain("value", S("Stored"))]),
+		object("Boxed", [plain("kind", S("String")), plain("label", S("String"))]),
+		union("Stored", ["Shelved", "Loaned"], "kind"),
+		object("Loaned", [plain("kind", S("String")), plain("due", S("String"))]),
+	];
+	/** A variant holding a list of the union it is a variant of. */
+	const nestedRules: readonly TypeDef[] = [
+		union("Rule", ["TitleIs", "AllOf"], "kind"),
+		object("TitleIs", [plain("kind", S("String")), plain("title", S("String"))]),
+		object("AllOf", [plain("kind", S("String")), plain("rules", L(S("Rule")))]),
+	];
+
+	it("cuts a recursive union where graphql-tools cuts one", () => {
+		expect(body(written(filter, rootOf(N("Filter"))).document)).toEqual([
+			"    __typename",
+			"    ... on Eq {",
+			"      kind",
+			"      value",
+			"    }",
+			"    ... on Negate {",
+			"      kind",
+			"      operand {",
+			"        __typename",
+			"        ... on Eq {",
+			"          kind",
+			"          value",
+			"        }",
+			"        ... on Twice {",
+			"          kind",
+			"          again {",
+			"            __typename",
+			"            kind",
+			"          }",
+			"        }",
+			"      }",
+			"    }",
+			"    ... on Twice {",
+			"      kind",
+			"      again {",
+			"        __typename",
+			"        kind",
+			"      }",
+			"    }",
+		]);
+		const wrapper = [object("Node", [plain("value", N("Node"))])];
+		expect(body(written(wrapper, rootOf(N("Node"))).document)).toEqual([
+			"    __typename",
+			"    value {",
+			"      __typename",
+			"    }",
+		]);
+	});
+
+	it("leaves out a union's member the selection is already inside a field of", () => {
+		expect(body(written(reentered, rootOf(N("Holding"))).document)).toEqual([
+			"    __typename",
+			"    ... on Shelved {",
+			"      kind",
+			"      value {",
+			"        __typename",
+			"        ... on Loaned {",
+			"          kind",
+			"          due",
+			"        }",
+			"      }",
+			"    }",
+			"    ... on Boxed {",
+			"      kind",
+			"      label",
+			"    }",
+		]);
+	});
+
+	/**
+	 * **The same cut as `buildOperationNodeForField`'s own document**, run on the schema each plan
+	 * stands for: the root field's selection, `__typename` aside, which that function does not write.
+	 */
+	it.each([
+		["a union whose variants hold it", filter, "Filter"],
+		["a member reached again inside itself", reentered, "Holding"],
+		["a variant holding a list of its union", nestedRules, "Rule"],
+	])("selects as graphql-tools does for %s", (_case, types, root) => {
+		const field = rootOf(N(root));
+		const schema = buildSchema(sdlOf(types, field));
+		const theirs = buildOperationNodeForField({ schema, kind: "query" as never, field: "read" });
+		const ours = parse(written(types, field).document).definitions[0];
+		const selectionOf = (operation: unknown): string => {
+			const { selectionSet } = operation as OperationDefinitionNode;
+			const [read] = selectionSet.selections;
+			return print(
+				visit((read as FieldNode).selectionSet as SelectionSetNode, {
+					Field: (node) => (node.name.value === "__typename" ? null : undefined),
+				}),
+			);
+		};
+		expect(selectionOf(ours)).toBe(selectionOf(theirs));
+	});
+
+	it("selects a payload of another type, below one of the same type, once", () => {
+		const nested: readonly TypeDef[] = [
+			object("Outer", [plain("value", S("Middle"))]),
+			object("Middle", [plain("value", S("Inner"))]),
+			object("Inner", [plain("id", S("String")), plain("outer", N("Outer"))]),
+		];
+		expect(body(written(nested, rootOf(N("Outer"))).document)).toEqual([
+			"    __typename",
+			"    value {",
+			"      __typename",
+			"      value {",
+			"        __typename",
+			"        id",
+			"      }",
+			"    }",
+		]);
+	});
+
 	it("writes a field of a leaf type with no selection, and finds nothing in it", () => {
 		const root = rootOf(
 			S("Int"),
@@ -700,5 +842,100 @@ describe("where a success answer holds a value of the REST body", () => {
 		const request = written(one, rootOf(N("Book")));
 		expect(request.successTypenames).toBeUndefined();
 		expect([...request.resultPathsOf(["id"])]).toEqual([["Book", ["read", "id"]]]);
+	});
+
+	it("finds an item of a list root field by its index, and nothing in the list by a key", () => {
+		const books = [object("Book", [plain("id", S("String"))])];
+		const request = written(books, rootOf(L(S("Book"))));
+		expect([...request.resultPathsOf(["0", "id"])]).toEqual([["Book", ["read", "0", "id"]]]);
+		expect([...request.resultPathsOf(["7", "id"])]).toEqual([["Book", ["read", "7", "id"]]]);
+		expect([...request.resultPathsOf(["id"])]).toEqual([]);
+		expect([...request.resultPathsOf(["01", "id"])]).toEqual([]);
+		expect([...request.resultPathsOf([])]).toEqual([["Book", ["read"]]]);
+	});
+
+	it("finds an item of a list of a union by its index, under each member's own name", () => {
+		const copies = [
+			union("Copy", ["Paperback", "Ebook"], "kind"),
+			object("Paperback", [plain("kind", S("String")), plain("title", S("String"))]),
+			object("Ebook", [plain("kind", S("String")), plain("title", N("String"))]),
+		];
+		const request = written(copies, rootOf(L(S("Copy"))));
+		expect([...request.resultPathsOf(["3", "title"])]).toEqual([
+			["Paperback", ["read", "3", "title"]],
+			["Ebook", ["read", "3", "titleString"]],
+		]);
+		expect([...request.resultPathsOf(["title"])]).toEqual([]);
+	});
+
+	describe("below a union the answer nests", () => {
+		// A 201 wrapping a discriminated union whose members each carry their payload under `value`.
+		const nested: readonly TypeDef[] = [
+			union("Result", ["Created", "Problem"]),
+			object("Created", [plain("value", S("Edition"))]),
+			object("Problem", [plain("title", S("String"))]),
+			union("Edition", ["EditionPrint", "EditionDigital", "EditionAudio"], "kind"),
+			object("EditionPrint", [plain("kind", S("String")), plain("value", S("Printed"))]),
+			object("EditionDigital", [plain("kind", S("String")), plain("value", S("Digital"))]),
+			object("EditionAudio", [plain("kind", S("String")), plain("value", S("Audio"))]),
+			object("Printed", [
+				plain("id", S("String")),
+				plain("pages", S("Int")),
+				plain("title", S("String")),
+			]),
+			object("Digital", [
+				plain("id", S("String")),
+				plain("pages", S("Long")),
+				plain("title", S("String")),
+			]),
+			object("Audio", [plain("id", S("String")), plain("minutes", S("Int"))]),
+		];
+		const created = rootOf(N("Result"), {
+			"201": { as: "wrap", type: "Created", hasBody: true },
+			"400": { as: "member", type: "Problem" },
+		});
+
+		it("finds the value every member holds under one name", () => {
+			const request = written(nested, created);
+			expect([...request.resultPathsOf(["value", "id"])]).toEqual([
+				["Created", ["read", "value", "value", "id"]],
+			]);
+			expect([...request.resultPathsOf(["kind"])]).toEqual([
+				["Created", ["read", "value", "kind"]],
+			]);
+		});
+
+		it("finds nothing where the members answer it under two names, or one member has none", () => {
+			const request = written(nested, created);
+			// Printed's `pages` keeps its name, Digital's `Long!` one is aliased, Audio has none.
+			expect(request.document).toMatch(/^ +pagesLongNonNull: pages$/m);
+			expect([...request.resultPathsOf(["value", "pages"])]).toEqual([]);
+			expect([...request.resultPathsOf(["value", "minutes"])]).toEqual([]);
+			// Two of three members hold it under one name; the third has none.
+			expect([...request.resultPathsOf(["value", "title"])]).toEqual([]);
+			// Whichever member is first: one lacking it, or one holding it beside one lacking it.
+			const audioFirst = nested.map((type) =>
+				type.name === "Edition" ? union("Edition", ["EditionAudio", "EditionPrint"], "kind") : type,
+			);
+			expect([...written(audioFirst, created).resultPathsOf(["value", "minutes"])]).toEqual([]);
+			const printFirst = nested.map((type) =>
+				type.name === "Edition" ? union("Edition", ["EditionPrint", "EditionAudio"], "kind") : type,
+			);
+			expect([...written(printFirst, created).resultPathsOf(["value", "minutes"])]).toEqual([]);
+			const twoNames = written(
+				nested
+					.filter((type) => type.name !== "EditionAudio" && type.name !== "Audio")
+					.map((type) =>
+						type.name === "Edition"
+							? union("Edition", ["EditionPrint", "EditionDigital"], "kind")
+							: type,
+					),
+				created,
+			);
+			expect([...twoNames.resultPathsOf(["value", "id"])]).toEqual([
+				["Created", ["read", "value", "value", "id"]],
+			]);
+			expect([...twoNames.resultPathsOf(["value", "pages"])]).toEqual([]);
+		});
 	});
 });

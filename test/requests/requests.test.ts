@@ -370,7 +370,10 @@ describe("graphqlRequestsOf, where union members' fields cannot merge", () => {
 				"Books_shelve",
 				"Books_edition",
 				"Books_copy",
+				"Books_release",
 				"Shelves_read",
+				"Shelves_printings",
+				"Shelves_rule",
 				"Formats_read",
 			].map((operationId) => [
 				operationId,
@@ -414,7 +417,10 @@ describe("graphqlRequestsOf, where union members' fields cannot merge", () => {
 			"createBook",
 			"edition",
 			"format",
+			"printings",
+			"releaseBook",
 			"shelf",
+			"shelfRule",
 			"shelving",
 		]);
 		for (const request of conflicts) {
@@ -552,6 +558,8 @@ describe("graphqlRequestsOf, where union members' fields cannot merge", () => {
 			readonly answer: { readonly status: number; readonly body: unknown };
 			readonly typename: string;
 			readonly wire: readonly string[];
+			readonly method?: "POST";
+			readonly variables?: Readonly<Record<string, unknown>>;
 		}[] = [
 			{
 				field: "shelving",
@@ -585,14 +593,53 @@ describe("graphqlRequestsOf, where union members' fields cannot merge", () => {
 				typename: "EditionDigital",
 				wire: ["value", "pages"],
 			},
+			{
+				field: "printings",
+				operationId: "Shelves_printings",
+				url: "/shelves/s1/printings",
+				answer: { status: 200, body: [{ pages: 10 }, { pages: 12 }] },
+				typename: "Printed",
+				wire: ["1", "pages"],
+			},
+			{
+				field: "releaseBook",
+				operationId: "Books_release",
+				url: "/books/b1/release",
+				method: "POST",
+				variables: { input: { id: "b1" } },
+				answer: {
+					status: 200,
+					body: { kind: "audiobook", value: { isbn: "978-0", minutes: 300 } },
+				},
+				typename: "ReleaseBookOK",
+				wire: ["value", "isbn"],
+			},
+			{
+				field: "shelfRule",
+				operationId: "Shelves_rule",
+				url: "/shelves/s1/rule",
+				answer: { status: 200, body: { kind: "not", rule: { kind: "title", title: "Dune" } } },
+				typename: "Not",
+				wire: ["kind"],
+			},
+			{
+				field: "shelfRule",
+				operationId: "Shelves_rule",
+				url: "/shelves/s1/rule",
+				answer: { status: 200, body: { kind: "not", rule: { kind: "title", title: "Dune" } } },
+				typename: "Not",
+				wire: ["rule", "title"],
+			},
 		];
-		for (const { field, operationId, url, answer, typename, wire } of cases) {
+		for (const { field, operationId, url, answer, typename, wire, method, variables } of cases) {
 			answers = { [operationId]: answer };
-			const overRest = (await (await restApp.request(url)).json()) as unknown;
+			const overRest = (await (
+				await restApp.request(url, method === undefined ? {} : { method })
+			).json()) as unknown;
 			const request = named(field);
 			const result = await executeThroughYoga(
 				executable,
-				{ query: request.document, variables: { id: url.split("/")[2] } },
+				{ query: request.document, variables: variables ?? { id: url.split("/")[2] } },
 				{},
 			);
 			expect(result.errors, field).toBeUndefined();
